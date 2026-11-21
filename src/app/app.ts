@@ -64,6 +64,7 @@ export class App implements UiContext {
   private scanning = false;
   private cursorUrls = new Map<string, string>();
   private lastVis = 0;
+  private lastAutoSave = 0;
   minimized = false;
   /** Extra skins the menu offers (e.g. test skins served by the dev server). */
   skinLibrary: { name: string; url: string }[] = [];
@@ -281,11 +282,15 @@ export class App implements UiContext {
     } else this.errorStreak = 0;
   }
 
-  playIndex(i: number): void {
+  /** Where the last session stopped (seconds into the current track); used once by the first Play. */
+  private resumeAt = 0;
+
+  playIndex(i: number, offset = 0): void {
     const e = this.playlist.entries[i];
     if (!e) return;
+    this.resumeAt = 0;
     this.playlist.setCurrent(i);
-    void this.resumeCtx().then(() => this.engine.play(this.toTrack(e)));
+    void this.resumeCtx().then(() => this.engine.play(this.toTrack(e), offset));
   }
 
   private async resumeCtx(): Promise<void> {
@@ -296,7 +301,7 @@ export class App implements UiContext {
     if (this.engine.state === 'paused') return void this.engine.resume();
     if (!this.playlist.length) return this.eject();
     const i = this.playlist.current >= 0 ? this.playlist.current : 0;
-    this.playIndex(i);
+    this.playIndex(i, i === this.playlist.current ? this.resumeAt : 0);
   }
 
   pause(): void {
@@ -488,7 +493,7 @@ export class App implements UiContext {
   /** Adds audio files and playlists. Skins dropped here are loaded instead. */
   async addFiles(files: FileRef[], replace: boolean, play: boolean): Promise<void> {
     const skin = files.find((f) => isSkin(f.name));
-    if (skin) return this.loadSkinBytes(skin.name, new Uint8Array(await skin.read()), null);
+    if (skin) return this.loadSkinFile(skin);
     const items: { entry: Omit<Entry, 'id'>; file?: FileRef }[] = [];
     for (const f of files) {
       if (isPlaylist(f.name)) {
@@ -558,7 +563,10 @@ export class App implements UiContext {
     const s = this.settings;
     if (!s.playlist.length) return;
     const made = this.playlist.add(s.playlist.map((p) => ({ ...p })));
-    if (s.playlistIndex >= 0 && s.playlistIndex < made.length) this.playlist.setCurrent(s.playlistIndex);
+    if (s.playlistIndex >= 0 && s.playlistIndex < made.length) {
+      this.playlist.setCurrent(s.playlistIndex);
+      this.resumeAt = Math.max(0, s.resumePosition);
+    }
     this.scan(made);
   }
 
@@ -571,6 +579,25 @@ export class App implements UiContext {
       log.warn('skin load failed', url, e);
       this.flash('COULD NOT LOAD SKIN');
     }
+  }
+
+  /** Loads a skin file the user picked or dropped; remembered for next time when it has a real path. */
+  async loadSkinFile(f: FileRef): Promise<void> {
+    const remember = /^([a-z]:[\\/]|\\\\|https?:\/\/)/i.test(f.location) ? f.location : null;
+    this.loadSkinBytes(f.name, new Uint8Array(await f.read()), remember);
+  }
+
+  /** Loads the skin remembered from the last session (a URL or, in the desktop app, a file path). */
+  async restoreSkin(location: string): Promise<void> {
+    const name =
+      location
+        .split(/[\\/]/)
+        .pop()
+        ?.replace(/\.(wsz|zip)$/i, '') ?? location;
+    if (/^(https?:\/\/|\/)/i.test(location)) return this.loadSkinUrl(location, name);
+    const f = await this.platform.resolve(location).catch(() => null);
+    if (f) await this.loadSkinFile(f);
+    else log.warn('remembered skin is gone', location);
   }
 
   loadSkinBytes(name: string, bytes: Uint8Array, remember: string | null): void {
@@ -896,7 +923,7 @@ export class App implements UiContext {
         label: 'Load skin file…',
         action: async () => {
           const [f] = await this.platform.pickFiles({ accept: ['wsz', 'zip'], multiple: false });
-          if (f) this.loadSkinBytes(f.name, new Uint8Array(await f.read()), null);
+          if (f) await this.loadSkinFile(f);
         },
       },
     ];
@@ -1204,6 +1231,7 @@ export class App implements UiContext {
       durationSec: e.info?.durationSec ?? e.durationSec,
     }));
     s.playlistIndex = this.playlist.current;
+    s.resumePosition = this.engine.state === 'stopped' ? this.resumeAt : this.engine.position;
     this.platform.saveSetting('settings', saveSettings(s));
   }
 
@@ -1212,6 +1240,11 @@ export class App implements UiContext {
     requestAnimationFrame(() => this.frame());
     if (this.minimized) return;
     const now = performance.now();
+    // keep the resume position fresh in case the app is killed
+    if (this.engine.state === 'playing' && now - this.lastAutoSave > 10_000) {
+      this.lastAutoSave = now;
+      this.saveNow();
+    }
     const v = this.settings.ui.vis;
     if (v.mode !== 'off' && now - this.lastVis >= 1000 / v.fps) {
       this.lastVis = now;

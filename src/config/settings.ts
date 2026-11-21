@@ -75,6 +75,8 @@ export function defaultSettings(): Settings {
 
 /** Deep-merges saved data over defaults, so new settings get default values. */
 function merge<T>(base: T, saved: unknown): T {
+  // optional values (default null): keep whatever was saved
+  if (base === null) return (saved === undefined ? null : saved) as T;
   if (Array.isArray(base)) return (Array.isArray(saved) ? saved : base) as T;
   if (base && typeof base === 'object') {
     const out: Record<string, unknown> = { ...(base as Record<string, unknown>) };

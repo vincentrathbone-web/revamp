@@ -71,14 +71,7 @@ async function start(): Promise<void> {
     };
   }
   const remembered = app.settings.ui.skin;
-  if (remembered)
-    void app.loadSkinUrl(
-      remembered,
-      remembered
-        .split('/')
-        .pop()
-        ?.replace(/\.wsz$/i, ''),
-    );
+  if (remembered) void app.restoreSkin(remembered);
 
   // Browsers keep audio locked until the first click or key press.
   if (ctx.state === 'suspended') {
