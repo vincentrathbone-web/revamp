@@ -1,11 +1,13 @@
 /// <reference types="vitest/config" />
 import { defineConfig } from 'vite';
 import { playwright } from '@vitest/browser-playwright';
+import { devMusic } from './scripts/dev-music.ts';
 
 // Browser tests run in the installed Microsoft Edge: same Chromium engine as
 // Tauri's WebView2 on Windows, and no browser download is needed.
 export default defineConfig({
   clearScreen: false,
+  plugins: [devMusic(process.env.REVAMP_MUSIC ?? 'D:/Music/Broadcast3')],
   server: { port: 5199, strictPort: true },
   build: { target: 'es2022', outDir: 'dist' },
   test: {

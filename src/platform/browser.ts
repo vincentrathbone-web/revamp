@@ -1,0 +1,141 @@
+/** Browser implementation of the platform layer (used for development and testing). */
+import { blobSource } from '../audio/tags';
+import type { FileRef, Platform } from './platform';
+
+export function fileRefFromBlob(
+  file: File,
+  location = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name,
+): FileRef {
+  let url: string | null = null;
+  return {
+    name: file.name,
+    location,
+    size: file.size,
+    read: () => file.arrayBuffer(),
+    source: () => blobSource(file),
+    mediaUrl: async () => (url ??= URL.createObjectURL(file)),
+  };
+}
+
+function pick(accept: string, multiple: boolean, folder: boolean): Promise<File[]> {
+  return new Promise((resolve) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.multiple = multiple || folder;
+    if (accept) input.accept = accept;
+    if (folder) (input as HTMLInputElement & { webkitdirectory: boolean }).webkitdirectory = true;
+    input.style.display = 'none';
+    document.body.appendChild(input);
+    input.addEventListener('change', () => {
+      resolve([...(input.files ?? [])]);
+      input.remove();
+    });
+    input.addEventListener('cancel', () => {
+      resolve([]);
+      input.remove();
+    });
+    input.click();
+  });
+}
+
+/** Reads files and folders dropped on the page (folders are walked recursively). */
+export async function filesFromDrop(dt: DataTransfer): Promise<FileRef[]> {
+  const out: FileRef[] = [];
+  const entries = [...dt.items].map((i) => i.webkitGetAsEntry?.()).filter((e): e is FileSystemEntry => !!e);
+  if (!entries.length) return [...dt.files].map((f) => fileRefFromBlob(f));
+  const walk = async (entry: FileSystemEntry, path: string): Promise<void> => {
+    if (entry.isFile) {
+      const file = await new Promise<File>((res, rej) => (entry as FileSystemFileEntry).file(res, rej));
+      out.push(fileRefFromBlob(file, path + file.name));
+    } else if (entry.isDirectory) {
+      const reader = (entry as FileSystemDirectoryEntry).createReader();
+      let batch: FileSystemEntry[];
+      do {
+        batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+        for (const e of batch) await walk(e, `${path}${entry.name}/`);
+      } while (batch.length);
+    }
+  };
+  for (const e of entries) await walk(e, '');
+  return out;
+}
+
+export class BrowserPlatform implements Platform {
+  readonly kind = 'browser' as const;
+
+  async pickFiles(opts: { accept: string[]; multiple: boolean }): Promise<FileRef[]> {
+    const files = await pick(opts.accept.map((e) => `.${e}`).join(','), opts.multiple, false);
+    return files.map((f) => fileRefFromBlob(f));
+  }
+
+  async pickFolder(): Promise<FileRef[]> {
+    const files = await pick('', true, true);
+    return files
+      .map((f) => fileRefFromBlob(f))
+      .sort((a, b) => a.location.localeCompare(b.location, undefined, { numeric: true }));
+  }
+
+  async saveFile(name: string, data: Uint8Array | string): Promise<void> {
+    const blob = new Blob([data as BlobPart], { type: 'application/octet-stream' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  }
+
+  loadSetting(key: string): string | null {
+    try {
+      return localStorage.getItem(`revamp.${key}`);
+    } catch {
+      return null;
+    }
+  }
+
+  saveSetting(key: string, value: string): void {
+    try {
+      localStorage.setItem(`revamp.${key}`, value);
+    } catch {
+      /* storage blocked: settings just don't persist */
+    }
+  }
+
+  async resolve(location: string): Promise<FileRef | null> {
+    // The browser can only reach URLs (e.g. files served by the dev server or radio streams).
+    if (!/^https?:\/\//i.test(location) && !location.startsWith('/')) return null;
+    let size = 0;
+    try {
+      const ac = new AbortController();
+      const t = setTimeout(() => ac.abort(), 4000);
+      const head = await fetch(location, { method: 'HEAD', signal: ac.signal });
+      clearTimeout(t);
+      size = Number(head.headers.get('content-length') ?? 0) || 0;
+    } catch {
+      /* unknown size (e.g. a radio stream) */
+    }
+    let blob: Promise<Blob> | null = null;
+    const get = () => (blob ??= fetch(location).then((r) => r.blob()));
+    return {
+      name: decodeURIComponent(location.split('/').pop() ?? location),
+      location,
+      size,
+      read: async () => (await get()).arrayBuffer(),
+      source: () => ({
+        size,
+        // small reads (tags) use HTTP range requests, so scanning doesn't download whole files
+        read: async (o: number, l: number) => {
+          if (blob) return new Uint8Array(await (await blob).slice(o, o + l).arrayBuffer());
+          const r = await fetch(location, { headers: { Range: `bytes=${o}-${o + l - 1}` } });
+          const buf = new Uint8Array(await r.arrayBuffer());
+          return r.status === 206 ? buf : buf.subarray(o, o + l);
+        },
+      }),
+      mediaUrl: async () => location,
+    };
+  }
+
+  writeCrashReport(text: string): void {
+    console.error(text);
+    this.saveSetting('lastCrash', text);
+  }
+}
