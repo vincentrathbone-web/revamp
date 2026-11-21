@@ -29,12 +29,84 @@ export type TextRenderer = (
 export const ROW_H = 13;
 type MenuName = keyof typeof PL_MENUS;
 
+/** Is p on the 22x18 menu button at x (bottom bar of a window h pixels tall)? */
+const hitMenuButton = (p: Point, x: number, h: number) =>
+  p.x >= x && p.x < x + 22 && p.y >= h - 30 && p.y < h - 12;
+
 export class PlaylistWindow extends SkinnedWindow {
   readonly id = 'pl' as const;
   scroll = 0;
   private anchor = -1;
   private dragRow: number | null = null;
-  private openMenu: { name: MenuName; x: number; y: number; hover: number } | null = null;
+  private openMenu: {
+    name: MenuName;
+    x: number;
+    y: number;
+    hover: number;
+    sticky: boolean;
+    leftButton: boolean;
+  } | null = null;
+  /** True while a press that started on an item of a menu left open by a click is held. */
+  private menuPress = false;
+
+  /** Updates which item of the open menu is under the pointer. */
+  private menuHover(p: Point): void {
+    const m = this.openMenu;
+    if (!m) return;
+    const n = PL_MENUS[m.name].items.length;
+    const idx = p.x >= m.x - 3 && p.x < m.x + 22 ? Math.floor((p.y - m.y) / 18) : -1;
+    m.hover = idx >= 0 && idx < n ? idx : -1;
+  }
+
+  private runMenuItem(): void {
+    const m = this.openMenu;
+    this.openMenu = null;
+    if (m && m.hover >= 0) this.onMenuAction(PL_MENUS[m.name].items[m.hover]!.id);
+  }
+
+  /** Closes a menu left open by a click (e.g. when the window loses focus or Escape is pressed). */
+  closeMenu(): void {
+    if (!this.openMenu) return;
+    this.openMenu = null;
+    this.menuPress = false;
+    this.invalidate();
+  }
+
+  override pointerDown(p: Point, e: PointerEvent): void {
+    const m = this.openMenu;
+    if (m?.sticky) {
+      this.menuHover(p);
+      if (m.hover >= 0 && e.button !== 2)
+        this.menuPress = true; // runs on release
+      else this.closeMenu(); // a click anywhere else (also on the menu's own button) just closes it
+      this.invalidate();
+      return;
+    }
+    super.pointerDown(p, e);
+  }
+
+  override pointerMove(p: Point): void {
+    if (this.openMenu?.sticky) {
+      const before = this.openMenu.hover;
+      this.menuHover(p);
+      if (this.openMenu.hover !== before) this.invalidate();
+      this.host?.setCursor('pnormal');
+      return;
+    }
+    super.pointerMove(p);
+  }
+
+  override pointerUp(p: Point): void {
+    if (this.menuPress) {
+      this.menuPress = false;
+      this.menuHover(p);
+      if (this.openMenu?.hover !== undefined && this.openMenu.hover >= 0) this.runMenuItem();
+      else this.closeMenu();
+      this.invalidate();
+      return;
+    }
+    super.pointerUp(p);
+  }
   private buttons = new Map<string, Button>();
   private scrollDrag: { startY: number; startScroll: number } | null = null;
   private resizeDrag: { sx: number; sy: number; w: number; h: number } | null = null;
@@ -193,21 +265,30 @@ export class PlaylistWindow extends SkinnedWindow {
         22,
         18,
         {
+          // Press, drag onto an item and release runs it. A plain click (released on the button) keeps the
+          // menu open until the next click: on an item runs it, anywhere else closes the menu.
           down: () => {
             const m = PL_MENUS[name];
-            this.openMenu = { name, x, y: h - 30 + 18 - m.items.length * 18, hover: -1 };
+            this.openMenu = {
+              name,
+              x,
+              y: h - 30 + 18 - m.items.length * 18,
+              hover: -1,
+              sticky: false,
+              leftButton: false,
+            };
           },
           move: (p) => {
+            this.menuHover(p);
+            if (this.openMenu && !hitMenuButton(p, x, h)) this.openMenu.leftButton = true;
+          },
+          up: (p, inside) => {
             const m = this.openMenu;
             if (!m) return;
-            const n = PL_MENUS[m.name].items.length;
-            const idx = p.x >= m.x - 3 && p.x < m.x + 22 ? Math.floor((p.y - m.y) / 18) : -1;
-            m.hover = idx >= 0 && idx < n ? idx : -1;
-          },
-          up: () => {
-            const m = this.openMenu;
-            this.openMenu = null;
-            if (m && m.hover >= 0) this.onMenuAction(PL_MENUS[m.name].items[m.hover]!.id);
+            // the bottom item lies over the button: only run it once the pointer has been away from the button
+            if (m.hover >= 0 && m.leftButton) this.runMenuItem();
+            else if (inside && hitMenuButton(p, m.x, h)) m.sticky = true;
+            else this.openMenu = null;
           },
         },
         'pnormal',
@@ -319,6 +400,10 @@ export class PlaylistWindow extends SkinnedWindow {
   }
 
   override key(e: KeyboardEvent): boolean {
+    if (this.openMenu && e.key === 'Escape') {
+      this.closeMenu();
+      return true;
+    }
     const pl = this.ui.playlist;
     const sel = pl.entries.findIndex((x) => x.selected);
     const move = (to: number) => {

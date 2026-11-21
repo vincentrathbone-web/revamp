@@ -106,7 +106,10 @@ export class App implements UiContext {
       cursorUrl: (name) => this.cursorFor(name),
       snapEnabled: () => this.settings.ui.snap,
       snapDistance: () => this.settings.ui.snapDistance,
-      onFocus: () => this.invalidateAll(),
+      onFocus: (id) => {
+        if (id !== 'pl') this.plWin.closeMenu();
+        this.invalidateAll();
+      },
       onLayout: () => this.saveLayout(),
       onDrop: (id, e) => void this.onDrop(e, id),
     });

@@ -15,6 +15,7 @@ import { skinFromArchive } from '../../src/skin/skin';
 import { fakeUi, windowsFor } from './fake-ui';
 import { dbToPos, posToDb } from '../../src/ui/eq-window';
 import type { SkinnedWindow } from '../../src/ui/window';
+import { PlaylistWindow } from '../../src/ui/playlist-window';
 
 const GOLDEN = join(__dirname, '..', 'golden');
 
@@ -139,6 +140,81 @@ describe('window interaction', () => {
       w.dblclick({ x: 120, y: 6 });
       expect(calls, id).toContain(`toggleShade("${id}")`);
     }
+  });
+
+  describe('playlist bottom menus (add, rem, sel, misc, list)', () => {
+    const setup = () => {
+      const { ui } = fakeUi(skin);
+      const actions: string[] = [];
+      const pl = new PlaylistWindow(
+        ui,
+        () => null,
+        (id) => actions.push(id),
+      );
+      pl.render(true);
+      const btn = pl.controls.find((c) => c.id === 'add')!;
+      const at = { x: btn.x + 10, y: btn.y + 9 };
+      const menu = () => (pl as unknown as { openMenu: { x: number; y: number } | null }).openMenu;
+      return { pl, actions, at, menu };
+    };
+
+    test('a click opens the menu and it stays open', () => {
+      const { pl, at, menu } = setup();
+      click(pl, at.x, at.y);
+      expect(menu()).not.toBeNull();
+      pl.pointerMove({ x: 150, y: 40 }); // moving around doesn't close it
+      expect(menu()).not.toBeNull();
+    });
+
+    test('then clicking an item runs it and closes the menu', () => {
+      const { pl, actions, at, menu } = setup();
+      click(pl, at.x, at.y);
+      const m = menu()!;
+      pl.pointerMove({ x: m.x + 5, y: m.y + 9 });
+      click(pl, m.x + 5, m.y + 9);
+      expect(actions).toHaveLength(1);
+      expect(menu()).toBeNull();
+    });
+
+    test('clicking elsewhere or pressing Escape closes it without running anything', () => {
+      for (const how of ['elsewhere', 'escape'] as const) {
+        const { pl, actions, at, menu } = setup();
+        click(pl, at.x, at.y);
+        if (how === 'elsewhere') click(pl, 200, 40);
+        if (how === 'escape') pl.key({ key: 'Escape' } as KeyboardEvent);
+        expect(menu(), how).toBeNull();
+        expect(actions, how).toEqual([]);
+      }
+    });
+
+    test('a click that wobbles a little on the button still just opens the menu', () => {
+      // the bottom item is drawn over the button, so a shaky click must not run it
+      const { pl, actions, at, menu } = setup();
+      pl.pointerDown(at, pe());
+      pl.pointerMove({ x: at.x + 2, y: at.y + 1 });
+      pl.pointerUp({ x: at.x + 2, y: at.y + 1 });
+      expect(menu()).not.toBeNull();
+      expect(actions).toEqual([]);
+    });
+
+    test('press, drag onto an item and release still works', () => {
+      const { pl, actions, at, menu } = setup();
+      pl.pointerDown(at, pe());
+      const m = menu()!;
+      pl.pointerMove({ x: m.x + 5, y: m.y + 9 });
+      pl.pointerUp({ x: m.x + 5, y: m.y + 9 });
+      expect(actions).toHaveLength(1);
+      expect(menu()).toBeNull();
+    });
+
+    test('press and release away from the button and the menu closes it', () => {
+      const { pl, actions, at, menu } = setup();
+      pl.pointerDown(at, pe());
+      pl.pointerMove({ x: 200, y: 40 });
+      pl.pointerUp({ x: 200, y: 40 });
+      expect(menu()).toBeNull();
+      expect(actions).toEqual([]);
+    });
   });
 
   test('double-clicking a playlist row plays it', () => {
