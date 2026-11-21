@@ -1,0 +1,35 @@
+{
+  "name": "revamp",
+  "private": true,
+  "version": "0.1.0",
+  "description": "RevAmp - a classic skinnable music player, rebuilt from scratch.",
+  "license": "MIT",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run --project unit",
+    "test:browser": "vitest run --project browser",
+    "test:all": "vitest run",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "licenses": "node scripts/check-licenses.mjs",
+    "assets": "node scripts/make-test-assets.mjs",
+    "check": "npm run typecheck && npm run format:check && npm run licenses && npm run test:all"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.6",
+    "@vitest/browser-playwright": "^5.1.1",
+    "fast-check": "^4.10.3",
+    "playwright": "^1.65.1",
+    "prettier": "^3.10.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "vitest": "^5.1.1"
+  },
+  "dependencies": {
+    "fflate": "^0.8.3"
+  }
+}

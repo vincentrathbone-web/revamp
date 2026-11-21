@@ -1,0 +1,11 @@
+node_modules/
+dist/
+coverage/
+test-assets/generated/
+test-assets/skins/
+test-assets/music/
+src-tauri/target/
+src-tauri/gen/
+.vitest-attachments/
+__screenshots__/
+*.log
