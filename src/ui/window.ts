@@ -1,9 +1,12 @@
 /** Base class for skinned windows: owns a Surface and a list of controls, handles pointer routing. */
 import { Surface } from '../skin/surface';
-import { insideRegions, type Polygon } from '../skin/textfiles';
+import { regionMask, type Polygon } from '../skin/textfiles';
 import { hit, type Control, type Point } from './controls';
 
 export type WindowId = 'main' | 'eq' | 'pl';
+
+/** Big areas that only drag the window or hold text; the shape doesn't have to keep them solid. */
+const PASSIVE_AREAS = new Set(['drag', 'list', 'scroll', 'title', 'tracks']);
 
 /** What a window can ask of the thing that shows it on screen (browser page or native window). */
 export interface WindowHostApi {
@@ -65,27 +68,47 @@ export abstract class SkinnedWindow {
     return undefined;
   }
 
-  private maskCache: { key: unknown; w: number; h: number; mask: Uint8Array } | null = null;
+  private maskCache: { key: unknown; controls: Control[]; w: number; h: number; mask: Uint8Array | null } | null =
+    null;
+
+  /**
+   * The window shape as a mask (1 = solid), or null for a plain rectangle. Every button and slider stays solid,
+   * even where the skin's region cuts it away, so each control always works. A region that hides more than a
+   * quarter of the controls is treated as broken (some old region tools wrote garbage) and ignored.
+   */
+  private shapeMask(): Uint8Array | null {
+    const polys = this.region();
+    if (!polys) return null;
+    const { width: w, height: h } = this.surface;
+    const mc = this.maskCache;
+    if (mc && mc.key === polys && mc.controls === this.controls && mc.w === w && mc.h === h) return mc.mask;
+    const active = this.controls.filter((c) => !PASSIVE_AREAS.has(c.id));
+    let mask: Uint8Array | null = regionMask(polys, w, h);
+    const solid = (x: number, y: number) => x >= 0 && y >= 0 && x < w && y < h && mask![y * w + x] === 1;
+    const hidden = active.filter((c) => !solid(c.x + Math.floor(c.w / 2), c.y + Math.floor(c.h / 2))).length;
+    if (hidden > active.length / 4) mask = null;
+    else {
+      for (const c of active)
+        for (let y = Math.max(0, c.y); y < Math.min(h, c.y + c.h); y++)
+          for (let x = Math.max(0, c.x); x < Math.min(w, c.x + c.w); x++) mask[y * w + x] = 1;
+    }
+    this.maskCache = { key: polys, controls: this.controls, w, h, mask };
+    return mask;
+  }
 
   private applyRegion(): void {
-    const polys = this.region();
-    if (!polys) return;
-    const { width: w, height: h } = this.surface;
-    if (!this.maskCache || this.maskCache.key !== polys || this.maskCache.w !== w || this.maskCache.h !== h) {
-      const mask = new Uint8Array(w * h);
-      for (let y = 0; y < h; y++)
-        for (let x = 0; x < w; x++) mask[y * w + x] = insideRegions(polys, x, y) ? 1 : 0;
-      this.maskCache = { key: polys, w, h, mask };
-    }
-    const m = this.maskCache.mask;
+    const m = this.shapeMask();
+    if (!m) return;
     const d = this.surface.data;
     for (let i = 0; i < m.length; i++) if (!m[i]) d[i * 4 + 3] = 0;
   }
 
   /** False where the window is cut away by its region (clicks pass through). */
   inside(x: number, y: number): boolean {
-    const polys = this.region();
-    return !polys || insideRegions(polys, x, y);
+    const m = this.shapeMask();
+    if (!m) return true;
+    const { width: w, height: h } = this.surface;
+    return x >= 0 && y >= 0 && x < w && y < h && m[y * w + x] === 1;
   }
 
   controlAt(p: Point): Control | undefined {

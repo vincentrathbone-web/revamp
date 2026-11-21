@@ -131,18 +131,58 @@ export function parseRegion(text: string): Regions {
   return out;
 }
 
-/** Point-in-polygon (even-odd rule), used for click-through outside the skin's shape. */
+/**
+ * The window shape as a w×h mask (1 = solid): the union of the polygons, each filled with the even-odd rule.
+ * Same result as calling `insideRegions` for every pixel, but filled row by row, so a region made of a thousand
+ * small rectangles takes a millisecond instead of seconds.
+ */
+export function regionMask(polys: Polygon[], w: number, h: number): Uint8Array {
+  const mask = new Uint8Array(w * h);
+  const xs: number[] = [];
+  for (const poly of polys) {
+    let minY = Infinity,
+      maxY = -Infinity;
+    for (const [, y] of poly) {
+      minY = Math.min(minY, y);
+      maxY = Math.max(maxY, y);
+    }
+    for (let y = Math.max(0, Math.floor(minY)); y < Math.min(h, Math.ceil(maxY)); y++) {
+      const py = y + 0.5;
+      xs.length = 0;
+      for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+        const [xi, yi] = poly[i]!,
+          [xj, yj] = poly[j]!;
+        if (yi > py !== yj > py) xs.push(((xj - xi) * (py - yi)) / (yj - yi) + xi);
+      }
+      xs.sort((a, b) => a - b);
+      for (let k = 0; k + 1 < xs.length; k += 2) {
+        // pixel x is inside when x + 0.5 lies in [xs[k], xs[k+1])
+        const x0 = Math.max(0, Math.ceil(xs[k]! - 0.5));
+        const x1 = Math.min(w, Math.ceil(xs[k + 1]! - 0.5));
+        mask.fill(1, y * w + x0, y * w + Math.max(x0, x1));
+      }
+    }
+  }
+  return mask;
+}
+
+/**
+ * Is pixel (x, y) part of the window shape? The shape is the UNION of the polygons: region generators write many
+ * overlapping rectangles, and an overlap must stay solid (an even-odd rule across polygons would punch holes
+ * there, letting clicks fall through the buttons). Inside one polygon the even-odd rule applies.
+ */
 export function insideRegions(polys: Polygon[] | undefined, x: number, y: number): boolean {
   if (!polys || !polys.length) return true;
   const px = x + 0.5,
     py = y + 0.5;
-  let inside = false;
   for (const poly of polys) {
+    let inside = false;
     for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
       const [xi, yi] = poly[i]!,
         [xj, yj] = poly[j]!;
       if (yi > py !== yj > py && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) inside = !inside;
     }
+    if (inside) return true;
   }
-  return inside;
+  return false;
 }

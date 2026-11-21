@@ -112,7 +112,9 @@ export function skinFromFiles(name: string, files: Map<string, Uint8Array>, fall
   if (!found.has('nums_ex') && !found.has('numbers') && fallback) sheets.numbers = fallback.sheets.numbers;
   for (const sheet of SHEETS) {
     if (sheets[sheet]) continue;
-    if (!OPTIONAL_SHEETS.includes(sheet)) warnings.push(`${sheet}.bmp missing; using default`);
+    // numbers.bmp isn't needed when the skin has nums_ex.bmp (the digits come from there)
+    const replaced = sheet === 'numbers' && found.has('nums_ex');
+    if (!OPTIONAL_SHEETS.includes(sheet) && !replaced) warnings.push(`${sheet}.bmp missing; using default`);
     if (fallback) sheets[sheet] = fallback.sheets[sheet];
     else sheets[sheet] = createImage(...SHEET_SIZES[sheet]);
   }

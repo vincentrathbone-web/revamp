@@ -1,0 +1,152 @@
+{
+  "skins": 398,
+  "loadFailures": {},
+  "problems": {
+    "Green-Dimension-V2.wsz": [
+      "main (shade) pos: cut away by the skin's region (click goes through)"
+    ],
+    "My_Funny_Valentine.wsz": [
+      "main (shade) pos: slider thumb not redrawn when moved"
+    ],
+    "corpus\\winampskin_2creativ.wsz": [
+      "eq (shade) svol: slider thumb not redrawn when moved",
+      "eq (shade) sbal: slider thumb not redrawn when moved"
+    ],
+    "corpus\\winampskin_Adriana_Moreira.wsz": [
+      "eq (shade) sbal: slider thumb not redrawn when moved"
+    ],
+    "corpus\\winampskin_Ancient_Stone.wsz": [
+      "main (shade) sPause: cut away by the skin's region (click goes through)"
+    ],
+    "corpus\\winampskin_Antonio_Robinson_AkA_FireRat.wsz": [
+      "main options: cut away by the skin's region (click goes through)",
+      "main minimize: cut away by the skin's region (click goes through)",
+      "main shade: cut away by the skin's region (click goes through)",
+      "main close: cut away by the skin's region (click goes through)",
+      "main cO: cut away by the skin's region (click goes through)",
+      "main cA: cut away by the skin's region (click goes through)",
+      "main cI: cut away by the skin's region (click goes through)",
+      "main cD: cut away by the skin's region (click goes through)",
+      "main cV: cut away by the skin's region (click goes through)",
+      "main time: cut away by the skin's region (click goes through)",
+      "main vis: cut away by the skin's region (click goes through)",
+      "main title: cut away by the skin's region (click goes through)",
+      "main volume: cut away by the skin's region (click goes through)",
+      "main balance: cut away by the skin's region (click goes through)",
+      "main eqBtn: cut away by the skin's region (click goes through)",
+      "main plBtn: cut away by the skin's region (click goes through)",
+      "main prev: cut away by the skin's region (click goes through)",
+      "main play: cut away by the skin's region (click goes through)",
+      "main pause: cut away by the skin's region (click goes through)",
+      "main stop: cut away by the skin's region (click goes through)",
+      "main next: cut away by the skin's region (click goes through)",
+      "main eject: cut away by the skin's region (click goes through)",
+      "main shuffle: cut away by the skin's region (click goes through)",
+      "main repeat: cut away by the skin's region (click goes through)",
+      "eq (shade) unshade: cut away by the skin's region (click goes through)",
+      "eq (shade) close: cut away by the skin's region (click goes through)",
+      "eq (shade) svol: cut away by the skin's region (click goes through)",
+      "eq (shade) sbal: cut away by the skin's region (click goes through)"
+    ],
+    "corpus\\winampskin_austin_the_hell_yea.wsz": [
+      "main (shade) pos: slider thumb not redrawn when moved"
+    ],
+    "corpus\\winampskin_A_Night_At_The_Opera.wsz": [
+      "main (shade) pos: slider thumb not redrawn when moved"
+    ],
+    "corpus\\winampskin_Beacon.wsz": [
+      "main (shade) pos: slider thumb not redrawn when moved"
+    ],
+    "corpus\\winampskin_black.wsz": [
+      "eq shade: cut away by the skin's region (click goes through)",
+      "eq close: cut away by the skin's region (click goes through)",
+      "eq on: cut away by the skin's region (click goes through)",
+      "eq auto: cut away by the skin's region (click goes through)",
+      "eq presets: cut away by the skin's region (click goes through)",
+      "eq preamp: cut away by the skin's region (click goes through)",
+      "eq band5: cut away by the skin's region (click goes through)",
+      "eq band6: cut away by the skin's region (click goes through)",
+      "eq band7: cut away by the skin's region (click goes through)",
+      "eq band8: cut away by the skin's region (click goes through)",
+      "eq band9: cut away by the skin's region (click goes through)"
+    ],
+    "corpus\\winampskin_Black_Angel_Honda_1.wsz": [
+      "main (shade) pos: slider thumb not redrawn when moved"
+    ],
+    "corpus\\winampskin_Black_Sea.wsz": [
+      "eq shade: cut away by the skin's region (click goes through)",
+      "eq close: cut away by the skin's region (click goes through)"
+    ],
+    "corpus\\winampskin_blue_omega_betta.wsz": [
+      "main (shade) pos: slider thumb not redrawn when moved",
+      "eq (shade) svol: slider thumb not redrawn when moved",
+      "eq (shade) sbal: slider thumb not redrawn when moved"
+    ],
+    "corpus\\winampskin_Crimson_Fury.wsz": [
+      "main (shade) pos: slider thumb not redrawn when moved"
+    ],
+    "corpus\\winampskin_The_Official_Mosi_And_Matti.wsz": [
+      "main (shade) pos: slider thumb not redrawn when moved"
+    ],
+    "corpus\\winampskin_ZRN_4.wsz": [
+      "main (shade) pos: slider thumb not redrawn when moved",
+      "eq (shade) svol: slider thumb not redrawn when moved",
+      "eq (shade) sbal: slider thumb not redrawn when moved"
+    ]
+  },
+  "noPressArt": {
+    "main.cO": 45,
+    "main.cA": 43,
+    "main.cI": 44,
+    "main.cD": 44,
+    "main.cV": 44,
+    "pl.mPrev": 398,
+    "pl.mPlay": 398,
+    "pl.mPause": 398,
+    "pl.mStop": 398,
+    "pl.mNext": 398,
+    "pl.mEject": 398,
+    "main.sPrev": 398,
+    "main.sPlay": 398,
+    "main.sPause": 398,
+    "main.sStop": 398,
+    "main.sNext": 398,
+    "main.sEject": 398,
+    "eq.shade": 70,
+    "eq.close": 282,
+    "main.minimize": 68,
+    "main.shade": 31,
+    "main.close": 66,
+    "main.unshade": 30,
+    "main.eqBtn": 85,
+    "main.plBtn": 85,
+    "main.repeat": 72,
+    "eq.on": 79,
+    "main.play": 11,
+    "main.pause": 12,
+    "main.stop": 12,
+    "main.next": 11,
+    "eq.auto": 43,
+    "pl.close": 29,
+    "main.shuffle": 28,
+    "pl.shade": 14,
+    "eq.unshade": 33,
+    "pl.unshade": 10,
+    "main.eject": 10,
+    "main.prev": 10
+  },
+  "warnings": {
+    "numbers.bmp missing; using default": 79,
+    "playpaus.bmp missing; using default": 5,
+    "main.bmp missing; using default": 3,
+    "cbuttons.bmp missing; using default": 3,
+    "titlebar.bmp missing; using default": 3,
+    "text.bmp missing; using default": 3,
+    "posbar.bmp missing; using default": 3,
+    "volume.bmp missing; using default": 3,
+    "monoster.bmp missing; using default": 3,
+    "shufrep.bmp missing; using default": 3,
+    "eqmain.bmp missing; using default": 11,
+    "pledit.bmp missing; using default": 12
+  }
+}
