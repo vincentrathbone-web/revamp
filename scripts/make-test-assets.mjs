@@ -149,6 +149,11 @@ encodes.push(
   ['tone1k.wav', 'tagged.ogg', ['-c:a', 'libvorbis', '-q:a', '4', ...meta, ...rg]],
   ['tone1k.wav', 'tagged.opus', ['-c:a', 'libopus', '-b:a', '96k', ...meta, ...rg]],
   ['tone1k.wav', 'tagged.m4a', ['-c:a', 'aac', '-b:a', '128k', ...meta]],
+  ['sweep.wav', 'sweep.mp3', ['-c:a', 'libmp3lame', '-b:a', '192k']],
+  ['sweep.wav', 'sweep.flac', ['-c:a', 'flac']],
+  ['sweep.wav', 'sweep.ogg', ['-c:a', 'libvorbis', '-q:a', '5']],
+  ['sweep.wav', 'sweep.opus', ['-c:a', 'libopus', '-b:a', '128k']],
+  ['sweep.wav', 'sweep.m4a', ['-c:a', 'aac', '-b:a', '192k']],
 );
 let encoded = 0;
 for (const [src, dst, args] of encodes) {
