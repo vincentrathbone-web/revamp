@@ -150,6 +150,7 @@ export async function startDesktop(app: App, platform: TauriPlatform): Promise<v
     setTimeout(() => void poll(), 33);
   };
   void poll();
+  void selfTest(app, platform);
 
   // files dropped from Explorer arrive as paths
   await getCurrentWebview().onDragDropEvent(async (e) => {
@@ -158,5 +159,43 @@ export async function startDesktop(app: App, platform: TauriPlatform): Promise<v
     const files = await platform.refs(paths);
     if (files.length)
       await app.addFiles(files, false, app.engine.state === 'stopped' && !app.playlist.length);
+  });
+}
+
+/** Debug builds only (see self_test in main.rs): plays one file and writes what happened to a JSON report. */
+async function selfTest(app: App, platform: TauriPlatform): Promise<void> {
+  const cfg = await invoke<[string, string] | null>('self_test').catch(() => null);
+  if (!cfg) return;
+  const [file, out] = cfg;
+  const report: Record<string, unknown> = { file, platform: platform.kind };
+  try {
+    const ref = await platform.resolve(file);
+    report.resolved = !!ref;
+    report.size = ref?.size;
+    if (ref) {
+      const vol = app.settings.audio.chain.volume;
+      app.setVolume(0); // silent: the analyser reads the signal before the volume stage
+      await app.addFiles([ref], true, true);
+      await new Promise((r) => setTimeout(r, 6000));
+      const e = app.playlist.currentEntry;
+      report.title = e?.info?.title;
+      report.artist = e?.info?.artist;
+      report.duration = e?.info?.durationSec;
+      report.state = app.engine.state;
+      report.position = app.engine.position;
+      report.ctx = app.ctx.state;
+      const a = app.engine.analyser;
+      const buf = new Float32Array(a.fftSize);
+      a.getFloatTimeDomainData(buf);
+      report.peak = buf.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+      app.stop();
+      app.setVolume(vol);
+    }
+  } catch (err) {
+    report.error = String(err);
+  }
+  await invoke('write_file', {
+    path: out,
+    data: Array.from(new TextEncoder().encode(JSON.stringify(report, null, 2))),
   });
 }

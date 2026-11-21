@@ -1,0 +1,3 @@
+# The MinGW resource compiler (windres) breaks on the space in "D:\VS Code", so build output goes to a no-space folder.
+[build]
+target-dir = "D:/Dev/revamp-target"

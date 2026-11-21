@@ -61,10 +61,20 @@ fn crash_report(app: tauri::AppHandle, text: String) -> Result<(), String> {
     fs::write(dir.join("last-crash.txt"), text).map_err(|e| e.to_string())
 }
 
+/// Debug builds only: REVAMP_SELFTEST=<music file> and REVAMP_SELFTEST_OUT=<report.json> make the app play
+/// the file and write a short report, so the desktop build can be checked without clicking.
+#[tauri::command]
+fn self_test() -> Option<(String, String)> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    Some((std::env::var("REVAMP_SELFTEST").ok()?, std::env::var("REVAMP_SELFTEST_OUT").ok()?))
+}
+
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![expand_paths, write_file, crash_report])
+        .invoke_handler(tauri::generate_handler![expand_paths, write_file, crash_report, self_test])
         .run(tauri::generate_context!())
         .expect("error while running RevAmp");
 }
