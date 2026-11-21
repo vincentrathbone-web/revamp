@@ -11,3 +11,4 @@ __screenshots__/
 *.log
 .vitest/
 dist/
+test-assets/skin-button-report*.json
