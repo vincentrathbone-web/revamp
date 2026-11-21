@@ -36,6 +36,6 @@
     "license": "MIT",
     "licenseFile": "../LICENSE",
     "shortDescription": "A skinnable music player",
-    "category": "Audio"
+    "category": "Music"
   }
 }
