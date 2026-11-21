@@ -97,6 +97,21 @@ const EXPECT: Record<WindowId, Record<string, string>> = {
     resize: 'skip', // needs the window host (screen coordinates); covered by host tests
   },
 };
+/** Hot spots the classic format gives no pressed art (shade-mode and playlist mini transport). */
+const NO_PRESS_ART = new Set([
+  'sPrev',
+  'sPlay',
+  'sPause',
+  'sStop',
+  'sNext',
+  'sEject',
+  'mPrev',
+  'mPlay',
+  'mPause',
+  'mStop',
+  'mNext',
+  'mEject',
+]);
 /** Areas that only drag or scroll the window/list (covered by other tests). */
 const PASSIVE = new Set(['drag', 'list', 'scroll', 'tracks']);
 
@@ -204,7 +219,7 @@ function menuDraws(skin: Skin, shade: boolean, cid: string): boolean {
 }
 
 /** Clicks every control of one window and returns the problems found. */
-function checkWindow(skin: Skin, id: WindowId, shade: boolean): string[] {
+function checkWindow(skin: Skin, id: WindowId, shade: boolean, strict: boolean): string[] {
   const problems: string[] = [];
   const where = `${id}${shade ? ' (shade)' : ''}`;
   const probe = makeWindows(skin, shade).wins[id];
@@ -302,8 +317,10 @@ function checkWindow(skin: Skin, id: WindowId, shade: boolean): string[] {
     const before = snapshot(win.surface);
     win.pointerDown(p, pe());
     win.render(true);
-    if (c instanceof Button && !differs(before, win.surface, c))
-      report.noPressArt[`${id}.${cid}`] = (report.noPressArt[`${id}.${cid}`] ?? 0) + 1;
+    if (c instanceof Button && !differs(before, win.surface, c)) {
+      if (strict && !NO_PRESS_ART.has(cid)) problems.push(`${where} ${cid}: no pressed look`);
+      else report.noPressArt[`${id}.${cid}`] = (report.noPressArt[`${id}.${cid}`] ?? 0) + 1;
+    }
     win.pointerUp(p);
     if (!calls.some((k) => k.startsWith(want)))
       problems.push(`${where} ${cid}: click sent ${calls.join(' ') || 'nothing'}`);
@@ -331,6 +348,22 @@ function checkWindow(skin: Skin, id: WindowId, shade: boolean): string[] {
   return problems;
 }
 
+/**
+ * Every check for one loaded skin: sheet sizes, then every control of every window, normal and shade.
+ * `strict` (for RevAmp's own skins) also fails buttons that look the same pressed and released.
+ */
+export function checkSkin(skin: Skin, strict = false): string[] {
+  const problems: string[] = [];
+  for (const [sheet, [sw, sh]] of Object.entries(SHEET_SIZES)) {
+    const img = skin.sheets[sheet as keyof Skin['sheets']];
+    if (img.width < sw || img.height < sh)
+      problems.push(`${sheet}.bmp smaller than ${sw}x${sh} after padding`);
+  }
+  for (const shade of [false, true])
+    for (const id of ['main', 'eq', 'pl'] as const) problems.push(...checkWindow(skin, id, shade, strict));
+  return problems;
+}
+
 /** Runs shard `n` of `of` (the skins are split so the test files run in parallel). */
 export function skinButtonSuite(n: number, of: number): void {
   const skins = allSkins.filter((_, i) => i % of === n);
@@ -348,14 +381,7 @@ export function skinButtonSuite(n: number, of: number): void {
         const k = String(w).replace(/\d+/g, '#').slice(0, 60);
         report.warnings[k] = (report.warnings[k] ?? 0) + 1;
       }
-      const problems: string[] = [];
-      for (const [sheet, [sw, sh]] of Object.entries(SHEET_SIZES)) {
-        const img = skin.sheets[sheet as keyof Skin['sheets']];
-        if (img.width < sw || img.height < sh)
-          problems.push(`${sheet}.bmp smaller than ${sw}x${sh} after padding`);
-      }
-      for (const shade of [false, true])
-        for (const id of ['main', 'eq', 'pl'] as const) problems.push(...checkWindow(skin, id, shade));
+      const problems = checkSkin(skin);
       if (problems.length) report.problems[name] = problems;
       expect(problems).toEqual([]);
     });

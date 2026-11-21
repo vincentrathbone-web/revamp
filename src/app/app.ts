@@ -24,6 +24,7 @@ import {
   type Platform,
 } from '../platform/platform';
 import { filesFromDrop } from '../platform/browser';
+import { BUILTIN_SKINS, builtinLocation, builtinSkin, isBuiltinLocation } from '../skin/builtin';
 import { defaultSkin } from '../skin/default-skin';
 import { skinFromArchive, type Skin } from '../skin/skin';
 import type { MenuKind, UiContext, UiState } from '../ui/context';
@@ -592,6 +593,12 @@ export class App implements UiContext {
 
   /** Loads the skin remembered from the last session (a URL or, in the desktop app, a file path). */
   async restoreSkin(location: string): Promise<void> {
+    if (isBuiltinLocation(location)) {
+      const skin = builtinSkin(location);
+      if (skin) this.setSkin(skin);
+      else log.warn('remembered built-in skin is gone', location);
+      return;
+    }
     const name =
       location
         .split(/[\\/]/)
@@ -922,6 +929,20 @@ export class App implements UiContext {
           this.scheduleSave();
         },
       },
+      ...BUILTIN_SKINS.map((s) => ({
+        label: s.name,
+        checked: this.settings.ui.skin === builtinLocation(s.id),
+        radio: true,
+        action: () => {
+          const loc = builtinLocation(s.id);
+          const skin = builtinSkin(loc);
+          if (!skin) return;
+          this.setSkin(skin);
+          this.settings.ui.skin = loc;
+          this.scheduleSave();
+        },
+      })),
+      'sep' as const,
       {
         label: 'Load skin file…',
         action: async () => {

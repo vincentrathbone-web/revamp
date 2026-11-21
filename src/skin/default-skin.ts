@@ -1,32 +1,83 @@
 /**
- * RevAmp's own default skin, "Graphite", painted in code into the standard sheet layout.
- * Original art: dark graphite panels with an amber display. No third-party artwork is used.
+ * RevAmp's own skins, painted in code into the standard sheet layout. All art is original; no third-party
+ * artwork is used. "Graphite" (dark panels, amber display) is the default; other looks are themes: a palette
+ * plus an optional surface texture (see themes.ts). Every theme shares this drawing code, so they all fit
+ * the classic layout exactly.
  */
 import { createImage, type RgbaImage } from './image';
 import { SHEET_SIZES, type Skin } from './skin';
 import { MAIN, MAIN_POS, PL, PL_MENUS, EQ, EQ_POS, type Sprite } from './sprites';
 import { DEFAULT_VIS_COLORS } from './textfiles';
 
-type C = readonly [number, number, number];
-const P = {
-  bg0: [16, 19, 23] as C,
-  bg1: [30, 36, 43] as C,
-  bg2: [42, 50, 59] as C,
-  line: [58, 68, 80] as C,
-  hi: [92, 104, 118] as C,
-  sh: [9, 11, 14] as C,
-  lcd: [9, 11, 13] as C,
-  amber: [240, 168, 58] as C,
-  amberHi: [255, 214, 140] as C,
-  amberDim: [110, 78, 30] as C,
-  text: [208, 214, 222] as C,
-  dim: [112, 124, 138] as C,
-  red: [226, 82, 62] as C,
-  green: [92, 200, 120] as C,
+export type C = readonly [number, number, number];
+
+/** The colours a theme sets. "accent" colours light the displays, LEDs and active states. */
+export interface Palette {
+  /** Panel colours, darkest to lightest (on light themes "darkest" is simply the far end of the gradient). */
+  bg0: C;
+  bg1: C;
+  bg2: C;
+  /** Engraved lines and borders. */
+  line: C;
+  /** Bevel highlight and shadow. */
+  hi: C;
+  sh: C;
+  /** Display background (time, title, playlist). */
+  lcd: C;
+  /** Display/accent colour, a brighter and a dimmer version. */
+  amber: C;
+  amberHi: C;
+  amberDim: C;
+  /** Labels on panels and buttons; `dim` for inactive or secondary labels. */
+  text: C;
+  dim: C;
+  red: C;
+  green: C;
+  /** Playlist: current track and selection background. */
+  current: C;
+  selectedBg: C;
+}
+
+/** Changes a panel or button pixel (wood grain, brushed metal, paper...). x, y are sheet coordinates. */
+export type Texture = (x: number, y: number, c: C, kind: 'panel' | 'button') => C;
+
+export interface Theme {
+  /** Stable id (used in settings), e.g. "graphite". */
+  id: string;
+  name: string;
+  palette: Palette;
+  texture?: Texture;
+}
+
+export const GRAPHITE: Theme = {
+  id: 'graphite',
+  name: 'RevAmp Graphite',
+  palette: {
+    bg0: [16, 19, 23],
+    bg1: [30, 36, 43],
+    bg2: [42, 50, 59],
+    line: [58, 68, 80],
+    hi: [92, 104, 118],
+    sh: [9, 11, 14],
+    lcd: [9, 11, 13],
+    amber: [240, 168, 58],
+    amberHi: [255, 214, 140],
+    amberDim: [110, 78, 30],
+    text: [208, 214, 222],
+    dim: [112, 124, 138],
+    red: [226, 82, 62],
+    green: [92, 200, 120],
+    current: [255, 240, 210],
+    selectedBg: [60, 46, 22],
+  },
 };
 
+/** The theme being painted (set by `themedSkin` while it draws). */
+let P: Palette = GRAPHITE.palette;
+let TEX: Texture | undefined;
+
 // ------------------------------------------------------------------ 3x5 pixel font (original design)
-const FONT: Record<string, string> = {
+export const FONT_3X5: Record<string, string> = {
   A: '010101111101101',
   B: '110101110101110',
   C: '011100100100011',
@@ -93,7 +144,7 @@ const FONT: Record<string, string> = {
   '*': '000101010101000',
   ' ': '000000000000000',
 };
-const TEXT_ROWS = ['ABCDEFGHIJKLMNOPQRSTUVWXYZ"@', "0123456789….:()-'!_+\\/[]^&%,=$#", 'ÅÖÄ?*'];
+export const TEXT_ROWS = ['ABCDEFGHIJKLMNOPQRSTUVWXYZ"@', "0123456789….:()-'!_+\\/[]^&%,=$#", 'ÅÖÄ?*'];
 
 class Painter {
   constructor(readonly img: RgbaImage) {}
@@ -108,10 +159,12 @@ class Painter {
   fill(x: number, y: number, w: number, h: number, c: C): void {
     for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) this.px(x + i, y + j, c);
   }
-  vgrad(x: number, y: number, w: number, h: number, a: C, b: C): void {
+  /** Vertical gradient; panels and button faces get the theme's texture. */
+  vgrad(x: number, y: number, w: number, h: number, a: C, b: C, kind: 'panel' | 'button' = 'panel'): void {
     for (let j = 0; j < h; j++) {
-      const t = h > 1 ? j / (h - 1) : 0;
-      this.fill(x, y + j, w, 1, mix(a, b, t));
+      const c = mix(a, b, h > 1 ? j / (h - 1) : 0);
+      if (!TEX) this.fill(x, y + j, w, 1, c);
+      else for (let i = 0; i < w; i++) this.px(x + i, y + j, TEX(x + i, y + j, c, kind));
     }
   }
   rect(x: number, y: number, w: number, h: number, c: C): void {
@@ -129,6 +182,7 @@ class Painter {
       h,
       sunken ? mix(face, P.sh, 0.4) : mix(face, P.hi, 0.25),
       sunken ? face : mix(face, P.sh, 0.25),
+      'button',
     );
     const tl = sunken ? P.sh : P.hi,
       br = sunken ? P.hi : P.sh;
@@ -146,7 +200,7 @@ class Painter {
     this.fill(x + w, y - 1, 1, h + 2, P.line);
   }
   glyph(ch: string, x: number, y: number, c: C): void {
-    const g = FONT[ch.toUpperCase()] ?? FONT[' ']!;
+    const g = FONT_3X5[ch.toUpperCase()] ?? FONT_3X5[' ']!;
     for (let j = 0; j < 5; j++)
       for (let i = 0; i < 3; i++) if (g[j * 3 + i] === '1') this.px(x + i, y + j, c);
   }
@@ -667,15 +721,35 @@ function makePledit(): RgbaImage {
   return img;
 }
 
-let cached: Skin | null = null;
+const built = new Map<string, Skin>();
 
+/** RevAmp's default skin (Graphite). */
 export function defaultSkin(): Skin {
-  if (cached) return cached;
+  return themedSkin(GRAPHITE);
+}
+
+/** Paints a complete skin in the given theme (cached per theme id). */
+export function themedSkin(theme: Theme): Skin {
+  const hit = built.get(theme.id);
+  if (hit) return hit;
+  const saved = [P, TEX] as const;
+  P = theme.palette;
+  TEX = theme.texture;
+  try {
+    const skin = paintSkin(theme.name);
+    built.set(theme.id, skin);
+    return skin;
+  } finally {
+    [P, TEX] = saved;
+  }
+}
+
+function paintSkin(name: string): Skin {
   const main = makeMain();
   // The title bar sits on top of main.bmp's first 14 rows; keep main's own top consistent with it.
   void MAIN_POS;
-  cached = {
-    name: 'RevAmp Graphite',
+  return {
+    name,
     sheets: {
       main,
       cbuttons: makeCbuttons(),
@@ -695,9 +769,9 @@ export function defaultSkin(): Skin {
     },
     playlist: {
       normal: P.amber as [number, number, number],
-      current: [255, 240, 210],
+      current: [...P.current] as [number, number, number],
       normalBg: P.lcd as [number, number, number],
-      selectedBg: [60, 46, 22],
+      selectedBg: [...P.selectedBg] as [number, number, number],
       font: 'Segoe UI',
     },
     vis: DEFAULT_VIS_COLORS.map((_c, i) => {
@@ -712,5 +786,4 @@ export function defaultSkin(): Skin {
     hasNumsEx: true,
     warnings: [],
   };
-  return cached;
 }
