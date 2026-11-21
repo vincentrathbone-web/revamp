@@ -82,7 +82,11 @@ export class App implements UiContext {
     this.engine = new AudioEngine(ctx, (t) => this.nextTrackAfter(t), s.audio);
     this.engine.on('trackStart', (t) => this.onTrackStart(t));
     this.engine.on('error', ({ track, error }) => this.onTrackError(track, error));
-    this.engine.on('state', () => this.invalidateAll());
+    this.engine.on('state', (st) => {
+      this.invalidateAll();
+      if ('mediaSession' in navigator) navigator.mediaSession.playbackState = st === 'stopped' ? 'none' : st;
+    });
+    this.setupMediaKeys();
     this.engine.on('info', (i) => {
       this.trackMeta.khz = i.sampleRate / 1000;
       this.trackMeta.channels = i.channels;
@@ -231,8 +235,34 @@ export class App implements UiContext {
     this.trackMeta = { kbps: e?.info?.bitrateKbps ?? 0, khz: 0, channels: 0 };
     if (e && this.settings.audio.chain.eq.auto) this.autoLoadPreset(e);
     if (idx >= 0) this.plWin.ensureVisible(idx);
+    if (e && 'mediaSession' in navigator) {
+      navigator.mediaSession.metadata = new MediaMetadata({
+        title: e.info?.title ?? displayTitle(e),
+        artist: e.info?.artist ?? '',
+        album: e.info?.album ?? '',
+      });
+    }
     this.invalidateAll();
     this.scheduleSave();
+  }
+
+  /** Keyboard media keys and the system media overlay. */
+  private setupMediaKeys(): void {
+    if (typeof navigator === 'undefined' || !('mediaSession' in navigator)) return;
+    const ms = navigator.mediaSession;
+    const on = (a: MediaSessionAction, fn: (d: MediaSessionActionDetails) => void) => {
+      try {
+        ms.setActionHandler(a, fn);
+      } catch {
+        /* action not supported here */
+      }
+    };
+    on('play', () => this.play());
+    on('pause', () => this.pause());
+    on('stop', () => this.stop());
+    on('nexttrack', () => this.next());
+    on('previoustrack', () => this.prev());
+    on('seekto', (d) => d.seekTime !== undefined && this.seek(d.seekTime));
   }
 
   private errorStreak = 0;
