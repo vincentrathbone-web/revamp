@@ -103,39 +103,67 @@ export class BrowserPlatform implements Platform {
   async resolve(location: string): Promise<FileRef | null> {
     // The browser can only reach URLs (e.g. files served by the dev server or radio streams).
     if (!/^https?:\/\//i.test(location) && !location.startsWith('/')) return null;
-    let size = 0;
-    try {
-      const ac = new AbortController();
-      const t = setTimeout(() => ac.abort(), 4000);
-      const head = await fetch(location, { method: 'HEAD', signal: ac.signal });
-      clearTimeout(t);
-      size = Number(head.headers.get('content-length') ?? 0) || 0;
-    } catch {
-      /* unknown size (e.g. a radio stream) */
-    }
-    let blob: Promise<Blob> | null = null;
-    const get = () => (blob ??= fetch(location).then((r) => r.blob()));
-    return {
-      name: decodeURIComponent(location.split('/').pop() ?? location),
-      location,
-      size,
-      read: async () => (await get()).arrayBuffer(),
-      source: () => ({
-        size,
-        // small reads (tags) use HTTP range requests, so scanning doesn't download whole files
-        read: async (o: number, l: number) => {
-          if (blob) return new Uint8Array(await (await blob).slice(o, o + l).arrayBuffer());
-          const r = await fetch(location, { headers: { Range: `bytes=${o}-${o + l - 1}` } });
-          const buf = new Uint8Array(await r.arrayBuffer());
-          return r.status === 206 ? buf : buf.subarray(o, o + l);
-        },
-      }),
-      mediaUrl: async () => location,
-    };
+    return urlFileRef(location, location);
   }
 
   writeCrashReport(text: string): void {
     console.error(text);
     this.saveSetting('lastCrash', text);
   }
+}
+
+/** Size of a URL: HEAD first, then a 1-byte range request (some servers, like Tauri's asset protocol, skip HEAD). */
+async function urlSize(url: string): Promise<number> {
+  const timed = async (init: RequestInit) => {
+    const ac = new AbortController();
+    const t = setTimeout(() => ac.abort(), 4000);
+    try {
+      return await fetch(url, { ...init, signal: ac.signal });
+    } finally {
+      clearTimeout(t);
+    }
+  };
+  try {
+    const head = await timed({ method: 'HEAD' });
+    const n = Number(head.headers.get('content-length') ?? 0);
+    if (head.ok && n > 0) return n;
+  } catch {
+    /* try the range request */
+  }
+  try {
+    const r = await timed({ headers: { Range: 'bytes=0-0' } });
+    const total = /\/(\d+)$/.exec(r.headers.get('content-range') ?? '');
+    void r.body?.cancel();
+    if (total) return Number(total[1]);
+  } catch {
+    /* unknown size (e.g. a radio stream) */
+  }
+  return 0;
+}
+
+/**
+ * A file reachable by URL. `location` is what the playlist stores (a URL or, in the desktop app, a real path);
+ * `url` is where the bytes are fetched from. Small reads (tags) use HTTP range requests, so scanning a big
+ * folder doesn't download whole files.
+ */
+export async function urlFileRef(location: string, url: string): Promise<FileRef> {
+  const size = await urlSize(url);
+  let blob: Promise<Blob> | null = null;
+  const get = () => (blob ??= fetch(url).then((r) => r.blob()));
+  return {
+    name: decodeURIComponent(location.split(/[\\/]/).pop() ?? location),
+    location,
+    size,
+    read: async () => (await get()).arrayBuffer(),
+    source: () => ({
+      size,
+      read: async (o: number, l: number) => {
+        if (blob) return new Uint8Array(await (await blob).slice(o, o + l).arrayBuffer());
+        const r = await fetch(url, { headers: { Range: `bytes=${o}-${o + l - 1}` } });
+        const buf = new Uint8Array(await r.arrayBuffer());
+        return r.status === 206 ? buf : buf.subarray(o, o + l);
+      },
+    }),
+    mediaUrl: async () => url,
+  };
 }

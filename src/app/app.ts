@@ -23,6 +23,7 @@ import {
   type FileRef,
   type Platform,
 } from '../platform/platform';
+import { filesFromDrop } from '../platform/browser';
 import { defaultSkin } from '../skin/default-skin';
 import { skinFromArchive, type Skin } from '../skin/skin';
 import type { MenuKind, UiContext, UiState } from '../ui/context';
@@ -365,7 +366,10 @@ export class App implements UiContext {
 
   closeWindow(id: WindowId): void {
     if (id === 'main') {
-      if (this.platform.quit) return this.platform.quit();
+      if (this.platform.quit) {
+        this.saveNow();
+        return this.platform.quit();
+      }
       void this.engine.stop();
       this.minimize();
       return;
@@ -482,7 +486,6 @@ export class App implements UiContext {
 
   private async onDrop(e: DragEvent, _id: WindowId | null): Promise<void> {
     if (!e.dataTransfer) return;
-    const { filesFromDrop } = await import('../platform/browser');
     const files = await filesFromDrop(e.dataTransfer);
     if (files.length)
       await this.addFiles(
@@ -1165,13 +1168,11 @@ export class App implements UiContext {
 
   saveNow(): void {
     const s = this.settings;
-    s.playlist = this.playlist.entries
-      .slice(0, 20000)
-      .map((e) => ({
-        location: e.location,
-        title: e.info?.title ? displayTitle(e) : e.title,
-        durationSec: e.info?.durationSec ?? e.durationSec,
-      }));
+    s.playlist = this.playlist.entries.slice(0, 20000).map((e) => ({
+      location: e.location,
+      title: e.info?.title ? displayTitle(e) : e.title,
+      durationSec: e.info?.durationSec ?? e.durationSec,
+    }));
     s.playlistIndex = this.playlist.current;
     this.platform.saveSetting('settings', saveSettings(s));
   }

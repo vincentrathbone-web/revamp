@@ -9,3 +9,5 @@ src-tauri/gen/
 .vitest-attachments/
 __screenshots__/
 *.log
+.vitest/
+dist/

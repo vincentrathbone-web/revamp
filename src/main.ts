@@ -1,7 +1,8 @@
-/** Browser entry point. */
+/** Entry point for the browser and the desktop app. */
 import { App } from './app/app';
 import { installCrashHandler, logger } from './core/log';
 import { BrowserPlatform } from './platform/browser';
+import type { Platform } from './platform/platform';
 import { createImage, type RgbaImage } from './skin/image';
 import type { TextRenderer } from './ui/playlist-window';
 
@@ -34,28 +35,26 @@ function canvasTextRenderer(): TextRenderer {
 }
 
 async function start(): Promise<void> {
-  const platform = new BrowserPlatform();
+  const desktop = await import('./platform/tauri');
+  const native = desktop.isTauri();
+  const platform: Platform = native ? new desktop.TauriPlatform() : new BrowserPlatform();
   installCrashHandler((t) => platform.writeCrashReport(t));
   const ctx = new AudioContext({ latencyHint: 'playback' });
   const app = new App(platform, ctx, document.getElementById('desktop')!, canvasTextRenderer());
   (globalThis as { revamp?: App }).revamp = app;
+  if (native) await desktop.startDesktop(app, platform as InstanceType<typeof desktop.TauriPlatform>);
 
-  // Dev server: offer the test skins in the Skins menu.
+  // Dev server: offer the test skins in the Skins menu (served by scripts/dev-music.ts, never bundled).
   if (import.meta.env.DEV) {
-    const skins = import.meta.glob('/test-assets/skins/*.wsz', {
-      query: '?url',
-      import: 'default',
-      eager: true,
-    }) as Record<string, string>;
-    app.skinLibrary = Object.entries(skins)
-      .map(([path, url]) => ({
-        name: path
-          .split('/')
-          .pop()!
-          .replace(/\.wsz$/i, ''),
-        url,
-      }))
-      .sort((a, b) => a.name.localeCompare(b.name));
+    void fetch('/dev-skins/index.json')
+      .then((r) => (r.ok ? (r.json() as Promise<string[]>) : []))
+      .then((names) => {
+        app.skinLibrary = names.map((f) => ({
+          name: f.replace(/\.wsz$/i, ''),
+          url: `/dev-skins/${encodeURIComponent(f)}`,
+        }));
+      })
+      .catch(() => {});
   }
   // Dev server: `revamp.addDevMusic(n)` queues files from the local test music folder.
   if (import.meta.env.DEV) {

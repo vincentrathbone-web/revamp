@@ -1,7 +1,7 @@
 /**
  * Shows skinned windows inside the browser page: one canvas per window, drawn pixel-exact
  * (integer scaling, no smoothing), dragged with snapping and docking like the classic player.
- * The Tauri build swaps this for native borderless windows (same SkinnedWindow API).
+ * The desktop app uses it too, inside one transparent full-screen window (see platform/tauri.ts).
  */
 import { dockedGroup, keepOnScreen, reflow, snap, type Rect } from './wm/snap';
 import type { SkinnedWindow, WindowHostApi, WindowId } from './window';
@@ -267,6 +267,26 @@ export class BrowserHost {
 
   get windows(): SkinnedWindow[] {
     return [...this.wins.values()].map((h) => h.win);
+  }
+
+  /** True while a window is being dragged. */
+  get dragging(): boolean {
+    return this.moving !== null;
+  }
+
+  /** True if page point (x, y) is on a visible, non-transparent part of a window (topmost first). */
+  hitTest(x: number, y: number): boolean {
+    const order = [...this.wins.values()].sort(
+      (a, b) => Number(b.el.style.zIndex || 0) - Number(a.el.style.zIndex || 0),
+    );
+    for (const h of order) {
+      if (!h.visible) continue;
+      const { w, h: hh } = this.sizeOf(h);
+      if (x < h.x || y < h.y || x >= h.x + w || y >= h.y + hh) continue;
+      const s = this.opts.scaleOf(h.win.id);
+      if (this.opts.inside(h.win.id, Math.floor((x - h.x) / s), Math.floor((y - h.y) / s))) return true;
+    }
+    return false;
   }
 
   canvasOf(id: WindowId): HTMLCanvasElement | undefined {

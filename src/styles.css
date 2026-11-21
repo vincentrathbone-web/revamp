@@ -283,3 +283,13 @@ body {
   text-align: center;
   z-index: 70;
 }
+
+/* desktop app: one transparent full-screen window; only the skinned windows are visible */
+html.native,
+html.native body {
+  background: transparent;
+}
+
+html.native #desktop {
+  background: none;
+}
