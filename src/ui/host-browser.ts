@@ -3,7 +3,7 @@
  * (integer scaling, no smoothing), dragged with snapping and docking like the classic player.
  * The desktop app uses it too, inside one transparent full-screen window (see platform/tauri.ts).
  */
-import { dockedGroup, keepOnScreen, reflow, snap, type Rect } from './wm/snap';
+import { dockedGroup, keepOnScreens, reflow, snap, type Rect } from './wm/snap';
 import type { SkinnedWindow, WindowHostApi, WindowId } from './window';
 
 export interface HostOptions {
@@ -57,6 +57,13 @@ export class BrowserHost {
 
   get screen(): Rect {
     return { x: 0, y: 0, w: this.root.clientWidth || innerWidth, h: this.root.clientHeight || innerHeight };
+  }
+
+  /** The monitors' work areas in page coordinates (desktop app). Unset = the page is one screen. */
+  monitors: Rect[] | null = null;
+
+  get screens(): Rect[] {
+    return this.monitors?.length ? this.monitors : [this.screen];
   }
 
   add(win: SkinnedWindow, x: number, y: number, visible = true): void {
@@ -217,7 +224,7 @@ export class BrowserHost {
       const others = Object.entries(r)
         .filter(([k]) => !m.ids.includes(k as WindowId))
         .map(([, v]) => v);
-      target = snap(moving, others, this.screen, this.opts.snapDistance());
+      target = snap(moving, others, this.screens, this.opts.snapDistance());
     }
     const ddx = target.x - m.start[lead]!.x,
       ddy = target.y - m.start[lead]!.y;
@@ -245,7 +252,7 @@ export class BrowserHost {
   keepAllOnScreen(): void {
     if (this.screen.w < 40 || this.screen.h < 40) return;
     for (const [id, h] of this.wins) {
-      const r = keepOnScreen({ x: h.x, y: h.y, ...this.sizeOf(h) }, this.screen);
+      const r = keepOnScreens({ x: h.x, y: h.y, ...this.sizeOf(h) }, this.screens);
       if (r.x !== h.x || r.y !== h.y) this.setPosition(id, r.x, r.y);
     }
   }

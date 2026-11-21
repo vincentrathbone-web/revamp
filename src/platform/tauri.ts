@@ -1,13 +1,14 @@
 /**
  * Desktop platform (Tauri 2 on Windows).
  *
- * Layout: one undecorated, transparent window covers the monitor's work area. The skinned windows are drawn
+ * Layout: one undecorated, transparent window covers the work areas of all monitors. The skinned windows are drawn
  * inside it exactly as in the browser, so docking/snapping code is shared. Mouse clicks pass through to the
  * desktop wherever no skinned window is drawn: the cursor position is polled and the native window switches
  * "ignore cursor events" on and off.
  */
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import {
+  availableMonitors,
   currentMonitor,
   cursorPosition,
   getCurrentWindow,
@@ -108,23 +109,64 @@ export class TauriPlatform implements Platform {
   }
 }
 
-/** Fits the window to the monitor work area, shows it, and starts click-through and file drop handling. */
+type Area = { position: { x: number; y: number }; size: { width: number; height: number } };
+let fitted: { key: string; x: number; y: number; scale: number } | null = null;
+
+/**
+ * Makes the transparent window cover the work areas of all monitors (their bounding box) and tells the window
+ * host where each monitor is, so player windows snap to monitor edges and come back if a monitor disappears.
+ * Player windows keep their place on screen when the bounding box moves.
+ * Limitation: the page uses one zoom factor, so on monitors with different scaling the player looks larger or
+ * smaller on one of them.
+ */
+async function fitMonitors(app: App): Promise<void> {
+  const win = getCurrentWindow();
+  const mons = await availableMonitors();
+  if (!mons.length) {
+    const m = await currentMonitor();
+    if (m) mons.push(m);
+  }
+  if (!mons.length) return;
+  const areas: Area[] = mons.map((m) => (m as typeof m & { workArea?: Area }).workArea ?? m);
+  const key = JSON.stringify(areas.map((a) => [a.position.x, a.position.y, a.size.width, a.size.height]));
+  if (fitted?.key === key) return;
+  const x0 = Math.min(...areas.map((a) => a.position.x));
+  const y0 = Math.min(...areas.map((a) => a.position.y));
+  const x1 = Math.max(...areas.map((a) => a.position.x + a.size.width));
+  const y1 = Math.max(...areas.map((a) => a.position.y + a.size.height));
+  await win.setPosition(new PhysicalPosition(x0, y0));
+  await win.setSize(new PhysicalSize(x1 - x0, y1 - y0));
+  const scale = await win.scaleFactor();
+  if (fitted) {
+    // keep the player windows where they are on screen
+    const dx = (fitted.x - x0) / scale,
+      dy = (fitted.y - y0) / scale;
+    for (const id of ['main', 'eq', 'pl'] as const) {
+      const p = app.host.position(id);
+      app.host.setPosition(id, p.x + dx, p.y + dy);
+    }
+  }
+  fitted = { key, x: x0, y: y0, scale };
+  app.host.monitors = areas.map((a) => ({
+    x: (a.position.x - x0) / scale,
+    y: (a.position.y - y0) / scale,
+    w: a.size.width / scale,
+    h: a.size.height / scale,
+  }));
+  app.host.keepAllOnScreen();
+  app.scheduleSave();
+  log.info(`covering ${areas.length} monitor(s): ${x1 - x0}x${y1 - y0} at ${x0},${y0}`);
+}
+
+/** Fits the window to the monitors, shows it, and starts click-through and file drop handling. */
 export async function startDesktop(app: App, platform: TauriPlatform): Promise<void> {
   document.documentElement.classList.add('native');
   const win = getCurrentWindow();
-  const mon = await currentMonitor();
-  if (mon) {
-    const area = (mon as typeof mon & { workArea?: { position: PhysicalPosition; size: PhysicalSize } })
-      .workArea ?? {
-      position: mon.position,
-      size: mon.size,
-    };
-    await win.setPosition(new PhysicalPosition(area.position.x, area.position.y));
-    await win.setSize(new PhysicalSize(area.size.width, area.size.height));
-  }
+  await fitMonitors(app);
   await win.show();
   if (app.settings.ui.alwaysOnTop) await win.setAlwaysOnTop(true);
-  app.host.keepAllOnScreen();
+  // monitors plugged in, removed or rearranged
+  setInterval(() => void fitMonitors(app).catch((e) => log.debug('monitor check failed', e)), 3000);
 
   // click-through where nothing is drawn
   let ignoring: boolean | null = null;

@@ -16,7 +16,12 @@ const overlap = (a0: number, a1: number, b0: number, b1: number, slack = 0) =>
   a0 < b1 + slack && b0 < a1 + slack;
 
 /** Returns the snapped top-left position for `moving` placed at (x, y). */
-export function snap(moving: Rect, others: Rect[], screen: Rect | null, dist = 10): { x: number; y: number } {
+export function snap(
+  moving: Rect,
+  others: Rect[],
+  screens: Rect | Rect[] | null,
+  dist = 10,
+): { x: number; y: number } {
   let bestX: number | null = null,
     bestDx = dist + 1;
   let bestY: number | null = null,
@@ -46,7 +51,12 @@ export function snap(moving: Rect, others: Rect[], screen: Rect | null, dist = 1
       if (vNear) (tryY(o.y), tryY(bottom(o) - moving.h));
     }
   }
-  if (screen) {
+  // inner edges of every screen the window is on (or next to)
+  for (const screen of screens === null ? [] : Array.isArray(screens) ? screens : [screens]) {
+    const onIt =
+      overlap(moving.x, right(moving), screen.x, right(screen), dist) &&
+      overlap(moving.y, bottom(moving), screen.y, bottom(screen), dist);
+    if (!onIt) continue;
     tryX(screen.x);
     tryX(right(screen) - moving.w);
     tryY(screen.y);
@@ -128,4 +138,23 @@ export function keepOnScreen(r: Rect, screen: Rect, margin = 20): Rect {
     x: Math.min(Math.max(r.x, screen.x - r.w + margin), right(screen) - margin),
     y: Math.min(Math.max(r.y, screen.y), bottom(screen) - margin),
   };
+}
+
+/**
+ * Multi-monitor version of keepOnScreen: a window that still shows at least `margin` px on some screen stays put;
+ * otherwise (e.g. its monitor was unplugged) it moves onto the nearest screen.
+ */
+export function keepOnScreens(r: Rect, screens: Rect[], margin = 20): Rect {
+  if (!screens.length) return r;
+  const visible = (s: Rect) =>
+    Math.min(right(r), right(s)) - Math.max(r.x, s.x) >= margin &&
+    Math.min(bottom(r), bottom(s)) - Math.max(r.y, s.y) >= Math.min(margin, r.h);
+  const titleVisible = (s: Rect) => r.y >= s.y && r.y < bottom(s) - margin / 2;
+  if (screens.some((s) => visible(s) && titleVisible(s))) return r;
+  const cx = r.x + r.w / 2,
+    cy = r.y + r.h / 2;
+  const dist = (s: Rect) =>
+    Math.hypot(Math.max(s.x - cx, 0, cx - right(s)), Math.max(s.y - cy, 0, cy - bottom(s)));
+  const best = screens.reduce((a, b) => (dist(b) < dist(a) ? b : a));
+  return keepOnScreen(r, best, margin);
 }
