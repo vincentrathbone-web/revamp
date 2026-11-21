@@ -94,6 +94,10 @@ class BufferVoice extends Voice {
   readonly trimEnd: number;
   scheduled = false;
 
+  /**
+   * @param partial true while this voice only holds the first seconds of the song (fast start); the engine swaps
+   *   in the full decode as soon as it is ready.
+   */
   constructor(
     ctx: BaseAudioContext,
     track: EngineTrack,
@@ -101,6 +105,7 @@ class BufferVoice extends Voice {
     readonly buffer: AudioBuffer,
     trim: boolean,
     thresholdDb: number,
+    readonly partial = false,
   ) {
     super(ctx, track, dest);
     const sr = buffer.sampleRate;
@@ -133,6 +138,15 @@ class BufferVoice extends Voice {
     this.startAt = w;
     this.startOffset = off;
     this.scheduled = true;
+  }
+
+  /** Stops at context time `when` (used when handing over to the full decode). */
+  stopAt(when: number): void {
+    try {
+      this.src?.stop(when);
+    } catch {
+      /* not started */
+    }
   }
 
   unschedule(): void {
@@ -233,6 +247,7 @@ export class AudioEngine extends Emitter<EngineEvents> {
   get duration(): number {
     const v = this.current;
     if (!v) return 0;
+    if (v instanceof BufferVoice && v.partial) return v.track.info?.durationSec ?? v.buffer.duration;
     return v instanceof BufferVoice ? v.trimEnd - v.trimStart : v.duration;
   }
   get analyser(): AnalyserNode {
@@ -274,24 +289,97 @@ export class AudioEngine extends Emitter<EngineEvents> {
       return new MediaVoice(this.ctx as AudioContext, t, this.chain.input, await t.mediaUrl());
     }
     const bytes = await t.load();
-    const buffer = await this.ctx.decodeAudioData(bytes);
+    return this.bufferVoice(t, await this.ctx.decodeAudioData(bytes));
+  }
+
+  private bufferVoice(t: EngineTrack, buffer: AudioBuffer, partial = false): BufferVoice {
     const v = new BufferVoice(
       this.ctx,
       t,
       this.chain.input,
       buffer,
-      this.settings.silenceRemover.enabled,
+      this.settings.silenceRemover.enabled && !partial,
       this.settings.silenceRemover.thresholdDb,
+      partial,
     );
     v.rg.gain.value = replayGainFactor(t.info?.replayGain, this.settings.replayGain);
-    this.emit('info', {
-      track: t,
-      sampleRate: buffer.sampleRate,
-      channels: buffer.numberOfChannels,
-      duration: buffer.duration,
-    });
+    if (!partial)
+      this.emit('info', {
+        track: t,
+        sampleRate: buffer.sampleRate,
+        channels: buffer.numberOfChannels,
+        duration: buffer.duration,
+      });
     return v;
   }
+
+  /** Seconds decoded up front for a fast start; the rest is decoded while the song already plays. */
+  static readonly HEAD_SECONDS = 15;
+
+  /**
+   * Fast start: decodes only the first seconds of the file, so playback starts in a few tens of ms instead of
+   * waiting for the whole song (about 1 s for a 4-minute MP3). Returns the partial voice and a promise for the
+   * full decode. Returns null when not worth it or not possible (short files, offsets, formats that can't be cut).
+   */
+  private async fastStart(
+    t: EngineTrack,
+    offset: number,
+  ): Promise<{ voice: BufferVoice; full: Promise<AudioBuffer> | null } | null> {
+    if (!this.live || this.wantsMedia(t) || offset > 5 || this.settings.silenceRemover.enabled) return null;
+    const bytes = await t.load();
+    const size = bytes.byteLength;
+    const dur = t.info?.durationSec;
+    const head = Math.max(256 * 1024, dur ? Math.ceil((size * AudioEngine.HEAD_SECONDS) / dur) : 512 * 1024);
+    if (head * 1.5 >= size) {
+      // small file: decoding everything is quick anyway
+      return { voice: this.bufferVoice(t, await this.ctx.decodeAudioData(bytes)), full: null };
+    }
+    const full = this.ctx.decodeAudioData(bytes.slice(0));
+    full.catch(() => {});
+    try {
+      const part = await this.ctx.decodeAudioData(bytes.slice(0, head));
+      if (part.duration < Math.min(4, AudioEngine.HEAD_SECONDS / 2) + offset) throw new Error('head too short');
+      return { voice: this.bufferVoice(t, part, true), full };
+    } catch {
+      // format that can't be cut (e.g. MP4 with its index at the end): wait for the full decode
+      return { voice: this.bufferVoice(t, await full), full: null };
+    }
+  }
+
+  /** Swaps a partial voice for the full decode at the same sample, without a click. */
+  private async completeFastStart(part: BufferVoice, full: Promise<AudioBuffer>, gen: number): Promise<void> {
+    let buffer: AudioBuffer;
+    try {
+      buffer = await full;
+    } catch {
+      return; // nothing to swap (already complete)
+    }
+    if (gen !== this.generation || this.current !== part) return;
+    const voice = this.bufferVoice(part.track, buffer);
+    voice.gain.gain.value = part.gain.gain.value;
+    const sr = this.ctx.sampleRate;
+    const when = Math.round((this.ctx.currentTime + 0.05) * sr) / sr;
+    const pos = this.pendingSeek !== null ? this.pendingSeek + voice.trimStart : part.position(when);
+    const seekJump = this.pendingSeek !== null;
+    this.pendingSeek = null;
+    if (pos >= part.buffer.duration - 0.01 && !seekJump) log.warn('fast start ran out before the full decode');
+    // the two decodes should match sample for sample; if not, hide the seam with a 15 ms crossfade
+    const same = !seekJump && sameSamples(part.buffer, buffer, pos, 512);
+    voice.start(when, pos);
+    if (same) part.stopAt(when);
+    else {
+      const xf = 0.015;
+      this.ramp(voice.gain.gain, when, xf, 0, 1);
+      this.ramp(part.gain.gain, when, xf, 1, 0);
+      part.stopAt(when + xf);
+    }
+    this.current = voice;
+    setTimeout(() => part.dispose(), 300);
+    this.preloadNext(gen);
+  }
+
+  /** Seek target (seconds) asked for while only the start of the song was decoded. */
+  private pendingSeek: number | null = null;
 
   // ---------------------------------------------------------------- transport
   /** Starts playing `t` from `offset` seconds. */
@@ -307,8 +395,14 @@ export class AudioEngine extends Emitter<EngineEvents> {
     this.chain.input.gain.cancelScheduledValues(this.ctx.currentTime);
     this.chain.input.gain.value = 1;
     let voice: Voice;
+    let full: Promise<AudioBuffer> | null = null;
+    this.pendingSeek = null;
     try {
-      voice = await this.makeVoice(t);
+      const fast = await this.fastStart(t, offset);
+      if (fast) {
+        voice = fast.voice;
+        full = fast.full;
+      } else voice = await this.makeVoice(t);
     } catch (error) {
       if (gen !== this.generation) return;
       log.warn('could not play', t.key, error);
@@ -332,7 +426,9 @@ export class AudioEngine extends Emitter<EngineEvents> {
     }
     this.setState('playing');
     this.emit('trackStart', t);
-    this.preloadNext(gen);
+    if (voice instanceof BufferVoice && voice.partial && full)
+      void this.track(this.completeFastStart(voice, full, gen));
+    else this.preloadNext(gen);
   }
 
   pause(): Promise<void> {
@@ -406,6 +502,11 @@ export class AudioEngine extends Emitter<EngineEvents> {
       g.linearRampToValueAtTime(1, now + this.lead() + f.ms / 1000);
     }
     if (v instanceof BufferVoice) {
+      if (v.partial && v.trimStart + sec > v.buffer.duration - 1) {
+        // beyond the decoded start: jump there as soon as the full song is ready
+        this.pendingSeek = Math.max(0, sec);
+        return;
+      }
       v.gain.gain.cancelScheduledValues(now);
       v.gain.gain.value = 1;
       v.start(now + this.lead(), v.trimStart + Math.max(0, sec));
@@ -516,7 +617,7 @@ export class AudioEngine extends Emitter<EngineEvents> {
   private scheduleNext(): void {
     const cur = this.current;
     const nxt = this.next;
-    if (!(cur instanceof BufferVoice) || !nxt || !cur.scheduled) return;
+    if (!(cur instanceof BufferVoice) || !nxt || !cur.scheduled || cur.partial) return;
     const xf = this.settings.crossfadeMs / 1000;
     const end = cur.endTime();
     const now = this.ctx.currentTime;
@@ -538,7 +639,7 @@ export class AudioEngine extends Emitter<EngineEvents> {
   private scheduleEndFade(): void {
     const cur = this.current;
     const f = this.settings.fades.endOfSong;
-    if (!(cur instanceof BufferVoice) || !f.enabled || f.ms <= 0) return;
+    if (!(cur instanceof BufferVoice) || cur.partial || !f.enabled || f.ms <= 0) return;
     const dur = Math.min(f.ms / 1000, cur.trimEnd - cur.trimStart);
     this.ramp(cur.gain.gain, Math.max(this.ctx.currentTime, cur.endTime() - dur), dur, 1, 0);
   }
@@ -548,7 +649,7 @@ export class AudioEngine extends Emitter<EngineEvents> {
     if (this.state !== 'playing') return;
     const now = this.ctx.currentTime;
     const cur = this.current;
-    if (!(cur instanceof BufferVoice)) return;
+    if (!(cur instanceof BufferVoice) || cur.partial) return;
     if (this.next && this.next.scheduled && now >= this.next.startAt) {
       const old = cur;
       const nxt = this.next;
@@ -584,3 +685,16 @@ export class AudioEngine extends Emitter<EngineEvents> {
 }
 
 const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** True if `a` and `b` hold the same samples for `n` frames from `atSec` (all channels, tiny tolerance). */
+export function sameSamples(a: AudioBuffer, b: AudioBuffer, atSec: number, n: number): boolean {
+  if (a.sampleRate !== b.sampleRate || a.numberOfChannels !== b.numberOfChannels) return false;
+  const i0 = Math.round(atSec * a.sampleRate);
+  if (i0 + n > a.length || i0 + n > b.length) return false;
+  for (let c = 0; c < a.numberOfChannels; c++) {
+    const x = a.getChannelData(c),
+      y = b.getChannelData(c);
+    for (let i = i0; i < i0 + n; i++) if (Math.abs(x[i]! - y[i]!) > 1e-6) return false;
+  }
+  return true;
+}

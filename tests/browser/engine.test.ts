@@ -244,3 +244,15 @@ describe('effects chain', () => {
     expect(ms).toBeLessThan(60_000 * 0.02 * 2); // includes decoding; generous for CI machines
   });
 });
+
+describe('fast start', () => {
+  test('mp3: decoding just the first part gives the same samples as the full decode', async () => {
+    const { sameSamples } = await import('../../src/audio/engine');
+    const ctx = new OfflineAudioContext(2, R, R);
+    const bytes = await fetchBytes('tone1k.mp3');
+    const full = await ctx.decodeAudioData(bytes.slice(0));
+    const part = await ctx.decodeAudioData(bytes.slice(0, Math.floor(bytes.byteLength / 2)));
+    expect(part.duration).toBeGreaterThan(1);
+    expect(sameSamples(part, full, 0.5, 2048)).toBe(true);
+  });
+});
