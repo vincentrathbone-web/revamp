@@ -347,7 +347,7 @@ export class AudioEngine extends Emitter<EngineEvents> {
       this.ramp(this.chain.input.gain, this.ctx.currentTime, f.ms / 1000, 1, 0);
       await sleep(f.ms);
     }
-    if (this.state !== 'paused') return;
+    if ((this.state as PlayState) !== 'paused') return; // resumed during the fade
     if (this.current instanceof MediaVoice) this.current.el.pause();
     else if (this.live) await (this.ctx as AudioContext).suspend();
   }
