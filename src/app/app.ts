@@ -15,10 +15,12 @@ import {
   writeXspf,
 } from '../playlist/formats';
 import {
-  isAudio,
+  extOf,
+  isMedia,
   isPlaylist,
   isSkin,
-  AUDIO_EXTENSIONS,
+  playsAsVideo,
+  MEDIA_EXTENSIONS,
   PLAYLIST_EXTENSIONS,
   type FileRef,
   type Platform,
@@ -27,15 +29,17 @@ import { filesFromDrop } from '../platform/browser';
 import { BUILTIN_SKINS, builtinLocation, builtinSkin, isBuiltinLocation } from '../skin/builtin';
 import { defaultSkin } from '../skin/default-skin';
 import { skinFromArchive, type Skin } from '../skin/skin';
-import type { MenuKind, UiContext, UiState } from '../ui/context';
+import type { MenuKind, UiContext, UiState, VideoCommand } from '../ui/context';
 import { dialog, factTable, prompt } from '../ui/dialogs';
 import { EqWindow } from '../ui/eq-window';
 import { BrowserHost } from '../ui/host-browser';
 import { MainWindow } from '../ui/main-window';
 import { showMenu, type MenuItem } from '../ui/menu';
 import { PlaylistWindow, type TextRenderer } from '../ui/playlist-window';
+import { VideoWindow } from '../ui/video-window';
 import { Visualizer } from '../ui/vis';
-import type { WindowId } from '../ui/window';
+import type { ShadeId, WindowId } from '../ui/window';
+import { VIDEO_MIN_H, VIDEO_MIN_W, videoArea } from '../skin/sprites';
 import { openPreferences } from './preferences';
 
 const log = logger('app');
@@ -54,6 +58,9 @@ export class App implements UiContext {
   readonly main: MainWindow;
   readonly eqWin: EqWindow;
   readonly plWin: PlaylistWindow;
+  readonly videoWin: VideoWindow;
+  /** The <video> element currently laid over the video window. */
+  private shownVideo: HTMLVideoElement | null = null;
   private files = new Map<number, FileRef>();
   private startTime = performance.now();
   private flashText: string | null = null;
@@ -98,6 +105,7 @@ export class App implements UiContext {
     this.main = new MainWindow(this);
     this.eqWin = new EqWindow(this);
     this.plWin = new PlaylistWindow(this, textRenderer, (id) => void this.plMenuAction(id));
+    this.videoWin = new VideoWindow(this);
     this.host = new BrowserHost(root, {
       scaleOf: (id) =>
         this.settings.ui.doubleSize && (id === 'main' || (id === 'eq' && this.settings.ui.doubleSizeEq))
@@ -118,6 +126,7 @@ export class App implements UiContext {
     this.host.add(this.main, pos.main.x, pos.main.y);
     this.host.add(this.eqWin, pos.eq.x, pos.eq.y, s.ui.eqVisible);
     this.host.add(this.plWin, pos.pl.x, pos.pl.y, s.ui.plVisible);
+    this.host.add(this.videoWin, pos.video.x, pos.video.y, s.ui.videoVisible);
     this.host.focus('main');
     this.host.keepAllOnScreen();
     this.playlist.onChange(() => {
@@ -162,6 +171,7 @@ export class App implements UiContext {
       shade: s.ui.shade,
       eq: s.audio.chain.eq,
       plSize: s.ui.plSize,
+      videoSize: s.ui.videoSize,
       clock: (performance.now() - this.startTime) / 1000,
       flash: performance.now() < this.flashUntil ? this.flashText : null,
     };
@@ -181,13 +191,14 @@ export class App implements UiContext {
   }
 
   private windowById(id: WindowId) {
-    return id === 'main' ? this.main : id === 'eq' ? this.eqWin : this.plWin;
+    return { main: this.main, eq: this.eqWin, pl: this.plWin, video: this.videoWin }[id];
   }
 
   invalidateAll(): void {
     this.main.invalidate();
     this.eqWin.invalidate();
     this.plWin.invalidate();
+    this.videoWin.invalidate();
   }
 
   flash(text: string): void {
@@ -202,6 +213,7 @@ export class App implements UiContext {
       key: String(e.id),
       info: e.info,
       stream: isStream(e.location),
+      video: playsAsVideo(e.location, e.info?.hasVideo),
       load: async () => {
         const f = await this.fileFor(e);
         if (!f) throw new Error(`Cannot open ${e.location}`);
@@ -294,7 +306,21 @@ export class App implements UiContext {
     if (!e) return;
     this.resumeAt = 0;
     this.playlist.setCurrent(i);
-    void this.resumeCtx().then(() => this.engine.play(this.toTrack(e), offset));
+    void this.resumeCtx()
+      .then(() => this.probeVideo(e))
+      .then(() => this.engine.play(this.toTrack(e), offset));
+  }
+
+  /** .mp4/.webm can be music or video: read the header first if the background scan hasn't yet. */
+  private async probeVideo(e: Entry): Promise<void> {
+    if (e.info || isStream(e.location) || !['mp4', 'webm'].includes(extOf(e.location))) return;
+    const f = await this.fileFor(e).catch(() => null);
+    if (!f) return;
+    try {
+      e.info = await readTrackInfo(f.source());
+    } catch (err) {
+      log.debug('probe failed', e.location, err);
+    }
   }
 
   private async resumeCtx(): Promise<void> {
@@ -395,10 +421,15 @@ export class App implements UiContext {
     this.scheduleSave();
   }
 
-  toggleWindow(id: 'eq' | 'pl'): void {
-    const vis = !this.host.isVisible(id);
+  toggleWindow(id: 'eq' | 'pl' | 'video'): void {
+    this.setWindowVisible(id, !this.host.isVisible(id));
+  }
+
+  private setWindowVisible(id: 'eq' | 'pl' | 'video', vis: boolean): void {
+    if (id === 'video' && !vis) this.exitFullscreen();
     this.host.setVisible(id, vis);
-    this.settings.ui[id === 'eq' ? 'eqVisible' : 'plVisible'] = vis;
+    this.settings.ui[({ eq: 'eqVisible', pl: 'plVisible', video: 'videoVisible' } as const)[id]] = vis;
+    if (vis) this.host.keepAllOnScreen();
     this.main.invalidate();
     this.scheduleSave();
   }
@@ -416,7 +447,7 @@ export class App implements UiContext {
     this.toggleWindow(id);
   }
 
-  toggleShade(id: WindowId): void {
+  toggleShade(id: ShadeId): void {
     this.settings.ui.shade[id] = !this.settings.ui.shade[id];
     this.windowById(id).relayout();
     this.scheduleSave();
@@ -470,10 +501,111 @@ export class App implements UiContext {
     this.scheduleSave();
   }
 
+  // ------------------------------------------------------------------ video
+  setVideoSize(w: number, h: number): void {
+    const scr = this.host.screens[0] ?? this.host.screen;
+    this.settings.ui.videoSize = {
+      w: Math.max(VIDEO_MIN_W, Math.min(Math.round(w), Math.max(VIDEO_MIN_W, scr.w))),
+      h: Math.max(VIDEO_MIN_H, Math.min(Math.round(h), Math.max(VIDEO_MIN_H, scr.h))),
+    };
+    this.videoWin.relayout();
+    this.scheduleSave();
+  }
+
+  videoCommand(cmd: VideoCommand): void {
+    const el = this.shownVideo;
+    switch (cmd) {
+      case 'fullscreen':
+        if (this.host.fullscreen) this.exitFullscreen();
+        else void this.enterFullscreen();
+        break;
+      case 'zoom1':
+      case 'zoom2': {
+        if (!el?.videoWidth) return this.flash('NO VIDEO PLAYING');
+        const k = cmd === 'zoom2' ? 2 : 1;
+        // window size so the picture area is exactly the video size (times k)
+        const a = videoArea(0, 0);
+        this.setVideoSize(el.videoWidth * k - a.w, el.videoHeight * k - a.h);
+        break;
+      }
+      case 'stretch':
+        this.settings.ui.videoStretch = !this.settings.ui.videoStretch;
+        this.shownVideo?.classList.toggle('stretch', this.settings.ui.videoStretch);
+        this.scheduleSave();
+        break;
+    }
+  }
+
+  private async enterFullscreen(): Promise<void> {
+    if (!this.shownVideo) return this.flash('NO VIDEO PLAYING');
+    if (!this.host.isVisible('video')) this.setWindowVisible('video', true);
+    const area = this.host.enterFullscreen('video', (kind, e) =>
+      kind === 'dblclick' ? this.exitFullscreen() : this.showMenu('video', e.clientX, e.clientY),
+    );
+    if (!area) return;
+    // desktop app: cover the whole monitor, taskbar included
+    const grown = await this.platform
+      .fullscreenMonitor?.(true, area.x + area.w / 2, area.y + area.h / 2)
+      .catch(() => false);
+    if (grown && this.host.fullscreen) this.host.fullscreenFillPage();
+  }
+
+  private exitFullscreen(): void {
+    if (!this.host.fullscreen) return;
+    this.host.exitFullscreen();
+    void this.platform.fullscreenMonitor?.(false, 0, 0).catch(() => {});
+  }
+
+  /** Keeps the video window showing the current track's picture (called every frame). */
+  private syncVideo(): void {
+    const el = this.engine.videoElement;
+    if (el === this.shownVideo) return;
+    this.shownVideo = el;
+    if (!el) {
+      this.exitFullscreen();
+      this.host.setOverlay('video', null);
+      this.videoWin.invalidate();
+      return;
+    }
+    el.classList.toggle('stretch', this.settings.ui.videoStretch);
+    this.host.setOverlay('video', el, () => this.videoWin.pictureRect);
+    if (this.settings.ui.videoAutoShow && !this.host.isVisible('video')) this.setWindowVisible('video', true);
+  }
+
+  private videoMenu(): MenuItem[] {
+    const has = !!this.shownVideo;
+    return [
+      {
+        label: 'Fullscreen',
+        shortcut: 'Alt+Enter',
+        checked: this.host.fullscreen,
+        disabled: !has,
+        action: () => this.videoCommand('fullscreen'),
+      },
+      { label: 'Original size (100%)', disabled: !has, action: () => this.videoCommand('zoom1') },
+      { label: 'Double size (200%)', disabled: !has, action: () => this.videoCommand('zoom2') },
+      {
+        label: 'Stretch to fill',
+        checked: this.settings.ui.videoStretch,
+        action: () => this.videoCommand('stretch'),
+      },
+      'sep',
+      {
+        label: 'Open video window when a video starts',
+        checked: this.settings.ui.videoAutoShow,
+        action: () => {
+          this.settings.ui.videoAutoShow = !this.settings.ui.videoAutoShow;
+          this.scheduleSave();
+        },
+      },
+      { label: 'Close video window', shortcut: 'Alt+V', action: () => this.setWindowVisible('video', false) },
+    ];
+  }
+
   // ------------------------------------------------------------------ files
   async openFiles(replace: boolean): Promise<void> {
     const files = await this.platform.pickFiles({
-      accept: [...AUDIO_EXTENSIONS, ...PLAYLIST_EXTENSIONS],
+      accept: [...MEDIA_EXTENSIONS, ...PLAYLIST_EXTENSIONS],
       multiple: true,
     });
     if (files.length) await this.addFiles(files, replace, replace);
@@ -508,7 +640,7 @@ export class App implements UiContext {
           const match = files.find((x) => x.location === loc || x.name === loc.split(/[\\/]/).pop());
           items.push({ entry: { ...it, location: loc }, file: match });
         }
-      } else if (isAudio(f.name)) items.push({ entry: { location: f.location }, file: f });
+      } else if (isMedia(f.name)) items.push({ entry: { location: f.location }, file: f });
     }
     if (!items.length) return this.flash('NO PLAYABLE FILES FOUND');
     if (replace) {
@@ -986,8 +1118,15 @@ export class App implements UiContext {
             checked: st.plVisible,
             action: () => this.toggleWindow('pl'),
           },
+          {
+            label: 'Video window',
+            shortcut: 'Alt+V',
+            checked: this.host.isVisible('video'),
+            action: () => this.toggleWindow('video'),
+          },
           'sep',
           { label: 'Skins', submenu: () => this.skinsMenu() },
+          { label: 'Video', submenu: () => this.videoMenu() },
           { label: 'Options', submenu: () => this.menuItems('options') },
           { label: 'Playback', submenu: () => this.playbackMenu() },
           { label: 'Visualization', submenu: () => this.visMenu() },
@@ -1052,6 +1191,8 @@ export class App implements UiContext {
         ];
       case 'vis':
         return this.visMenu();
+      case 'video':
+        return this.videoMenu();
       case 'eqPresets':
         return [
           {
@@ -1225,6 +1366,9 @@ export class App implements UiContext {
     else if (ctrl && k === 'w') fn = () => this.toggleShade('main');
     else if (e.altKey && k === 'e') fn = () => this.toggleWindow('pl');
     else if (e.altKey && k === 'g') fn = () => this.toggleWindow('eq');
+    else if (e.altKey && k === 'v') fn = () => this.toggleWindow('video');
+    else if (e.altKey && k === 'enter') fn = () => this.videoCommand('fullscreen');
+    else if (k === 'escape' && this.host.fullscreen) fn = () => this.exitFullscreen();
     else if (e.altKey && k === '3') fn = () => this.fileInfo();
     else if (k === 'l' && e.shiftKey && !ctrl) fn = () => void this.openFolder(true);
     else if (k === 'l' && !ctrl && !e.altKey) fn = () => void this.openFiles(true);
@@ -1238,7 +1382,8 @@ export class App implements UiContext {
 
   // ------------------------------------------------------------------ persistence
   private saveLayout(): void {
-    for (const id of ['main', 'eq', 'pl'] as const) this.settings.ui.positions[id] = this.host.position(id);
+    for (const id of ['main', 'eq', 'pl', 'video'] as const)
+      this.settings.ui.positions[id] = this.host.position(id);
     this.scheduleSave();
   }
 
@@ -1277,6 +1422,7 @@ export class App implements UiContext {
       this.vis.update(this.engine.analyser, this.engine.state === 'playing', cols);
     }
     if (this.engine.state !== 'stopped') this.plWin.invalidate();
+    this.syncVideo();
     void this.seekPreview;
     this.host.render();
   }

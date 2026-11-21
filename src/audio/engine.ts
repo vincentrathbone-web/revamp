@@ -23,6 +23,8 @@ export interface EngineTrack {
   mediaUrl?(): Promise<string>;
   /** Network stream (radio): always played through the media element. */
   stream?: boolean;
+  /** Has a picture: played through a <video> element (its sound still goes through the EQ chain). */
+  video?: boolean;
   info?: TrackInfo;
 }
 
@@ -181,11 +183,16 @@ class BufferVoice extends Voice {
 
 class MediaVoice extends Voice {
   readonly kind = 'media';
-  readonly el: HTMLAudioElement;
+  readonly el: HTMLMediaElement;
   private node: MediaElementAudioSourceNode;
   constructor(ctx: AudioContext, track: EngineTrack, dest: AudioNode, url: string) {
     super(ctx, track, dest);
-    this.el = new Audio();
+    if (track.video) {
+      const v = document.createElement('video');
+      v.playsInline = true;
+      v.disablePictureInPicture = true;
+      this.el = v;
+    } else this.el = new Audio();
     this.el.crossOrigin = 'anonymous';
     this.el.preload = 'auto';
     this.el.src = url;
@@ -202,6 +209,7 @@ class MediaVoice extends Voice {
     this.el.pause();
     this.el.removeAttribute('src');
     this.el.load();
+    this.el.remove(); // a video element may be on the page
     this.node.disconnect();
     super.dispose();
   }
@@ -253,6 +261,12 @@ export class AudioEngine extends Emitter<EngineEvents> {
   get analyser(): AnalyserNode {
     return this.chain.analyser;
   }
+  /** The <video> element of the current track, if it has a picture. */
+  get videoElement(): HTMLVideoElement | null {
+    const v = this.current;
+    if (!(v instanceof MediaVoice) || typeof HTMLVideoElement === 'undefined') return null;
+    return v.el instanceof HTMLVideoElement ? v.el : null;
+  }
 
   /** Resolves when all background loading/scheduling has finished (used by tests). */
   async idle(): Promise<void> {
@@ -278,7 +292,7 @@ export class AudioEngine extends Emitter<EngineEvents> {
 
   // ---------------------------------------------------------------- loading
   private wantsMedia(t: EngineTrack): boolean {
-    if (t.stream) return true;
+    if (t.stream || t.video) return true;
     const d = t.info?.durationSec;
     return !!(t.mediaUrl && this.live && d && d > this.settings.maxDecodeMinutes * 60);
   }
@@ -338,7 +352,8 @@ export class AudioEngine extends Emitter<EngineEvents> {
     full.catch(() => {});
     try {
       const part = await this.ctx.decodeAudioData(bytes.slice(0, head));
-      if (part.duration < Math.min(4, AudioEngine.HEAD_SECONDS / 2) + offset) throw new Error('head too short');
+      if (part.duration < Math.min(4, AudioEngine.HEAD_SECONDS / 2) + offset)
+        throw new Error('head too short');
       return { voice: this.bufferVoice(t, part, true), full };
     } catch {
       // format that can't be cut (e.g. MP4 with its index at the end): wait for the full decode
@@ -362,7 +377,8 @@ export class AudioEngine extends Emitter<EngineEvents> {
     const pos = this.pendingSeek !== null ? this.pendingSeek + voice.trimStart : part.position(when);
     const seekJump = this.pendingSeek !== null;
     this.pendingSeek = null;
-    if (pos >= part.buffer.duration - 0.01 && !seekJump) log.warn('fast start ran out before the full decode');
+    if (pos >= part.buffer.duration - 0.01 && !seekJump)
+      log.warn('fast start ran out before the full decode');
     // the two decodes should match sample for sample; if not, hide the seam with a 15 ms crossfade
     const same = !seekJump && sameSamples(part.buffer, buffer, pos, 512);
     voice.start(when, pos);

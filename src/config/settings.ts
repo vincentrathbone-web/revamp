@@ -6,9 +6,15 @@ import { defaultVis, type VisSettings } from '../ui/vis';
 export const SETTINGS_VERSION = 2;
 
 export interface UiSettings {
-  positions: Record<'main' | 'eq' | 'pl', { x: number; y: number }>;
+  positions: Record<'main' | 'eq' | 'pl' | 'video', { x: number; y: number }>;
   eqVisible: boolean;
   plVisible: boolean;
+  videoVisible: boolean;
+  videoSize: { w: number; h: number };
+  /** Open the video window when a video starts. */
+  videoAutoShow: boolean;
+  /** Fill the picture area instead of keeping the picture's shape. */
+  videoStretch: boolean;
   shade: Record<'main' | 'eq' | 'pl', boolean>;
   doubleSize: boolean;
   doubleSizeEq: boolean;
@@ -45,9 +51,18 @@ export function defaultSettings(): Settings {
     version: SETTINGS_VERSION,
     audio: defaultAudioSettings(),
     ui: {
-      positions: { main: { x: 40, y: 40 }, eq: { x: 40, y: 156 }, pl: { x: 40, y: 272 } },
+      positions: {
+        main: { x: 40, y: 40 },
+        eq: { x: 40, y: 156 },
+        pl: { x: 40, y: 272 },
+        video: { x: 315, y: 40 },
+      },
       eqVisible: true,
       plVisible: true,
+      videoVisible: false,
+      videoSize: { w: 275, h: 232 },
+      videoAutoShow: true,
+      videoStretch: false,
       shade: { main: false, eq: false, pl: false },
       doubleSize: false,
       doubleSizeEq: true,

@@ -6,7 +6,8 @@ use std::path::{Path, PathBuf};
 use tauri::Manager;
 
 const EXTENSIONS: &[&str] = &[
-    "mp3", "flac", "ogg", "oga", "opus", "m4a", "mp4", "aac", "wav", "webm", "m3u", "m3u8", "pls", "xspf", "b4s",
+    "mp3", "mp2", "mp1", "flac", "ogg", "oga", "opus", "m4a", "mp4", "aac", "wav", "webm", "aif", "aiff", "m4v",
+    "mkv", "mov", "ogv", "m3u", "m3u8", "pls", "xspf", "b4s",
 ];
 
 fn wanted(p: &Path) -> bool {

@@ -1,13 +1,14 @@
 /**
  * RevAmp's own skins, painted in code into the standard sheet layout. All art is original; no third-party
- * artwork is used. "Graphite" (dark panels, amber display) is the default; other looks are themes: a palette
- * plus an optional surface texture (see themes.ts). Every theme shares this drawing code, so they all fit
- * the classic layout exactly.
+ * artwork is used. "Graphite" (dark panels, amber display) is the default; a theme is a palette plus an
+ * optional surface texture, and every theme shares this drawing code, so it fits the classic layout exactly.
+ * (The hi-fi built-in skins have their own painter in studio/.)
  */
 import { createImage, type RgbaImage } from './image';
 import { SHEET_SIZES, type Skin } from './skin';
 import { MAIN, MAIN_POS, PL, PL_MENUS, EQ, EQ_POS, type Sprite } from './sprites';
 import { DEFAULT_VIS_COLORS } from './textfiles';
+import { videoSheetFromPledit } from './video-sheet';
 
 export type C = readonly [number, number, number];
 
@@ -748,9 +749,11 @@ function paintSkin(name: string): Skin {
   const main = makeMain();
   // The title bar sits on top of main.bmp's first 14 rows; keep main's own top consistent with it.
   void MAIN_POS;
+  const pledit = makePledit();
   return {
     name,
     sheets: {
+      video: videoSheetFromPledit(pledit),
       main,
       cbuttons: makeCbuttons(),
       titlebar: makeTitlebar(),
@@ -765,7 +768,7 @@ function paintSkin(name: string): Skin {
       shufrep: makeShufrep(),
       eqmain: makeEqmain(),
       eq_ex: makeEqEx(),
-      pledit: makePledit(),
+      pledit,
     },
     playlist: {
       normal: P.amber as [number, number, number],

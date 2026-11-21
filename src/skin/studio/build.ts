@@ -7,6 +7,7 @@ import { SHEET_SIZES, type Skin } from '../skin';
 import { EQ, EQ_POS, MAIN, MAIN_POS, PL, PL_MENUS, SHADE_POS, type Sprite } from '../sprites';
 import { TEXT_ROWS, FONT_3X5 } from '../default-skin';
 import type { Polygon, Regions } from '../textfiles';
+import { videoSheetFromPledit } from '../video-sheet';
 import {
   Canvas,
   bevel,
@@ -873,6 +874,7 @@ export function buildDesign(d: Design): Skin {
       eqmain,
       eq_ex: eqEx,
       pledit,
+      video: videoSheetFromPledit(pledit),
     },
     playlist: {
       normal: [...S.on] as [number, number, number],

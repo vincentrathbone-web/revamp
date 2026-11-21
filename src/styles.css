@@ -53,6 +53,33 @@ body {
   touch-action: none;
 }
 
+/* the picture laid over the video window (clicks go to the window underneath) */
+.rv-overlay {
+  position: absolute;
+  pointer-events: none;
+  background: #000;
+  object-fit: contain;
+}
+.rv-overlay.stretch {
+  object-fit: fill;
+}
+
+/* fullscreen video: above the player windows, below menus and dialogs */
+.rv-fullscreen {
+  position: fixed;
+  z-index: 30;
+  background: #000;
+}
+.rv-fullscreen .rv-overlay {
+  left: 0 !important;
+  top: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+}
+.rv-fullscreen.idle {
+  cursor: none;
+}
+
 .rv-tip {
   position: fixed;
   z-index: 60;

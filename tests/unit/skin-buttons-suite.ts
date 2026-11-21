@@ -1,6 +1,6 @@
 /**
  * Every button on every skin: loads each classic skin in test-assets/skins (and its corpus/ folder), then clicks
- * every control of the main, EQ and playlist windows (normal and shade mode) and checks that
+ * every control of the main, EQ and playlist windows (normal and shade mode) and the video window, and checks that
  *  - the click reaches the control (not covered by another one, not cut away by the skin's region.txt),
  *  - it sends the right command (play, stop, menus, minimize, shade, close, ...),
  *  - sliders move both ways and their thumb is redrawn,
@@ -19,6 +19,7 @@ import { Button, HSlider, VSlider, type Control } from '../../src/ui/controls';
 import { EqWindow } from '../../src/ui/eq-window';
 import { MainWindow } from '../../src/ui/main-window';
 import { PlaylistWindow } from '../../src/ui/playlist-window';
+import { VideoWindow } from '../../src/ui/video-window';
 import type { SkinnedWindow, WindowId } from '../../src/ui/window';
 import { fakeUi } from './fake-ui';
 
@@ -96,6 +97,17 @@ const EXPECT: Record<WindowId, Record<string, string>> = {
     mEject: 'eject()',
     resize: 'skip', // needs the window host (screen coordinates); covered by host tests
   },
+  video: {
+    close: 'closeWindow("video")',
+    title: 'dblclick:videoCommand("fullscreen")',
+    picture: 'dblclick:videoCommand("fullscreen")',
+    vFull: 'videoCommand("fullscreen")',
+    vZoom1: 'videoCommand("zoom1")',
+    vZoom2: 'videoCommand("zoom2")',
+    vStretch: 'videoCommand("stretch")',
+    vMenu: 'showMenu("video"',
+    resize: 'skip',
+  },
 };
 /** Hot spots the classic format gives no pressed art (shade-mode and playlist mini transport). */
 const NO_PRESS_ART = new Set([
@@ -163,6 +175,7 @@ function makeWindows(skin: Skin, shade: boolean) {
       () => null,
       (id) => menuActions.push(id),
     ),
+    video: new VideoWindow(f.ui),
   };
   return { ...f, wins, menuActions };
 }
@@ -361,6 +374,7 @@ export function checkSkin(skin: Skin, strict = false): string[] {
   }
   for (const shade of [false, true])
     for (const id of ['main', 'eq', 'pl'] as const) problems.push(...checkWindow(skin, id, shade, strict));
+  problems.push(...checkWindow(skin, 'video', false, strict)); // no shade mode
   return problems;
 }
 

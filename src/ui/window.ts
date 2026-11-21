@@ -3,7 +3,9 @@ import { Surface } from '../skin/surface';
 import { regionMask, type Polygon } from '../skin/textfiles';
 import { hit, type Control, type Point } from './controls';
 
-export type WindowId = 'main' | 'eq' | 'pl';
+export type WindowId = 'main' | 'eq' | 'pl' | 'video';
+/** The classic windows, which have a shade mode. */
+export type ShadeId = 'main' | 'eq' | 'pl';
 
 /** Big areas that only drag the window or hold text; the shape doesn't have to keep them solid. */
 const PASSIVE_AREAS = new Set(['drag', 'list', 'scroll', 'title', 'tracks']);
@@ -68,8 +70,13 @@ export abstract class SkinnedWindow {
     return undefined;
   }
 
-  private maskCache: { key: unknown; controls: Control[]; w: number; h: number; mask: Uint8Array | null } | null =
-    null;
+  private maskCache: {
+    key: unknown;
+    controls: Control[];
+    w: number;
+    h: number;
+    mask: Uint8Array | null;
+  } | null = null;
 
   /**
    * The window shape as a mask (1 = solid), or null for a plain rectangle. Every button and slider stays solid,

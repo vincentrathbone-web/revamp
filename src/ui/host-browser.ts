@@ -77,7 +77,7 @@ export class BrowserHost {
     const canvas = document.createElement('canvas');
     canvas.setAttribute(
       'aria-label',
-      { main: 'RevAmp main window', eq: 'Equalizer', pl: 'Playlist editor' }[win.id],
+      { main: 'RevAmp main window', eq: 'Equalizer', pl: 'Playlist editor', video: 'Video window' }[win.id],
     );
     el.appendChild(canvas);
     this.root.appendChild(el);
@@ -186,6 +186,110 @@ export class BrowserHost {
     h.canvas.style.width = `${w}px`;
     h.canvas.style.height = `${hh}px`;
     h.rect = { x: h.x, y: h.y, w, h: hh };
+    this.layoutOverlay(h.win.id);
+  }
+
+  // ---------------------------------------------------------------- overlays (video picture) and fullscreen
+  private overlays = new Map<WindowId, { el: HTMLElement; rect: () => Rect }>();
+  private full: { layer: HTMLDivElement; el: HTMLElement; id: WindowId; idle: number } | null = null;
+
+  /** Lays `el` over part of a window (`rect` in window pixels); null removes it. Clicks pass through to the window. */
+  setOverlay(
+    id: WindowId,
+    el: HTMLElement | null,
+    rect: () => Rect = () => ({ x: 0, y: 0, w: 0, h: 0 }),
+  ): void {
+    const old = this.overlays.get(id);
+    if (old?.el === el) return;
+    if (old && old.el.parentElement && (!this.full || this.full.el !== old.el)) old.el.remove();
+    if (this.full && this.full.el === old?.el) this.exitFullscreen();
+    if (!el) {
+      this.overlays.delete(id);
+      return;
+    }
+    el.classList.add('rv-overlay');
+    el.style.position = 'absolute';
+    el.style.pointerEvents = 'none';
+    this.overlays.set(id, { el, rect });
+    this.wins.get(id)?.el.appendChild(el);
+    this.layoutOverlay(id);
+  }
+
+  private layoutOverlay(id: WindowId): void {
+    const o = this.overlays.get(id);
+    if (!o || this.full?.el === o.el) return;
+    const s = this.scale(id);
+    const r = o.rect();
+    Object.assign(o.el.style, {
+      left: `${r.x * s}px`,
+      top: `${r.y * s}px`,
+      width: `${Math.max(0, r.w * s)}px`,
+      height: `${Math.max(0, r.h * s)}px`,
+    });
+  }
+
+  get fullscreen(): boolean {
+    return this.full !== null;
+  }
+
+  /**
+   * Shows a window's overlay filling the screen the window is on (the page, or one monitor in the desktop app).
+   * `onInput` gets double-clicks (to leave) and right-clicks (for a menu).
+   */
+  enterFullscreen(id: WindowId, onInput: (kind: 'dblclick' | 'menu', e: MouseEvent) => void): Rect | null {
+    const o = this.overlays.get(id);
+    const h = this.wins.get(id);
+    if (!o || !h || this.full) return null;
+    const c = { x: h.x + h.rect.w / 2, y: h.y + h.rect.h / 2 };
+    const area =
+      this.screens.find((r) => c.x >= r.x && c.y >= r.y && c.x < r.x + r.w && c.y < r.y + r.h) ??
+      this.screens[0]!;
+    const layer = document.createElement('div');
+    layer.className = 'rv-fullscreen';
+    Object.assign(layer.style, {
+      position: 'fixed',
+      background: '#000',
+      left: `${area.x}px`,
+      top: `${area.y}px`,
+      width: `${area.w}px`,
+      height: `${area.h}px`,
+    });
+    Object.assign(o.el.style, { left: '0', top: '0', width: '100%', height: '100%' });
+    layer.appendChild(o.el);
+    this.root.appendChild(layer);
+    const full = { layer, el: o.el, id, idle: 0 };
+    this.full = full;
+    const wake = () => {
+      layer.classList.remove('idle');
+      clearTimeout(full.idle);
+      full.idle = window.setTimeout(() => layer.classList.add('idle'), 2000);
+    };
+    layer.addEventListener('pointermove', wake);
+    layer.addEventListener('dblclick', (e) => onInput('dblclick', e));
+    layer.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      onInput('menu', e);
+    });
+    wake();
+    return area;
+  }
+
+  /** The fullscreen layer covers the whole page (desktop app: the page was just grown to one monitor). */
+  fullscreenFillPage(): void {
+    if (this.full)
+      Object.assign(this.full.layer.style, { left: '0', top: '0', width: '100vw', height: '100vh' });
+  }
+
+  /** Puts the overlay back over its window. */
+  exitFullscreen(): void {
+    const f = this.full;
+    if (!f) return;
+    this.full = null;
+    clearTimeout(f.idle);
+    const o = this.overlays.get(f.id);
+    if (o?.el === f.el) this.wins.get(f.id)?.el.appendChild(f.el);
+    f.layer.remove();
+    this.layoutOverlay(f.id);
   }
 
   rects(includeHidden = false): Record<string, Rect> {
@@ -300,6 +404,7 @@ export class BrowserHost {
 
   /** True if page point (x, y) is on a visible, non-transparent part of a window (topmost first). */
   hitTest(x: number, y: number): boolean {
+    if (this.full) return true;
     const order = [...this.wins.values()].sort(
       (a, b) => Number(b.el.style.zIndex || 0) - Number(a.el.style.zIndex || 0),
     );

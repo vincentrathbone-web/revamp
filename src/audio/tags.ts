@@ -1,6 +1,7 @@
 /**
  * Reads track info (tags, ReplayGain, duration, format) from audio files without decoding them.
- * Supports ID3v2.2/2.3/2.4 + ID3v1 + MPEG frame headers (MP3), FLAC, Ogg Vorbis/Opus, MP4/M4A and WAV.
+ * Supports ID3v2.2/2.3/2.4 + ID3v1 + MPEG frame headers (MP3), FLAC, Ogg Vorbis/Opus, MP4/M4A, WAV and
+ * Matroska/WebM (format, duration, and whether MP4/Matroska files hold a picture).
  * Written from the public format specifications.
  */
 import { parseGainText, type ReplayGainTags } from './replaygain';
@@ -20,6 +21,8 @@ export interface TrackInfo {
   channels?: number;
   bitrateKbps?: number;
   format?: string;
+  /** The container holds a picture track (MP4, Matroska/WebM); undefined when the format can't tell. */
+  hasVideo?: boolean;
 }
 
 export interface ByteSource {
@@ -511,6 +514,10 @@ async function parseMp4(src: ByteSource, info: TrackInfo): Promise<void> {
     o += size;
   }
   if (!moov) return;
+  info.hasVideo = false;
+  // per track: mdhd (time scale) comes before hdlr (track kind), which comes before stsd (sample format)
+  let trackRate = 0;
+  let handler = '';
   const walk = (
     b: Uint8Array,
     start: number,
@@ -543,9 +550,16 @@ async function parseMp4(src: ByteSource, info: TrackInfo): Promise<void> {
       if (scale) info.durationSec = dur / scale;
     } else if (type === 'mdhd') {
       const v = b[s]!;
-      info.sampleRate ??= be32(b, s + (v === 1 ? 20 : 12));
+      trackRate = be32(b, s + (v === 1 ? 20 : 12));
+    } else if (type === 'hdlr') {
+      handler = ascii(b, s + 8, 4);
+      if (handler === 'vide') {
+        info.hasVideo = true;
+        info.format = 'MP4';
+      } else if (handler === 'soun') info.sampleRate ??= trackRate;
     } else if (type === 'meta') walk(b, s + 4, e, visit);
     else if (type === 'stsd') {
+      if (handler !== 'soun') return;
       const entry = s + 8;
       const fmt = ascii(b, entry + 4, 4);
       if (fmt === 'alac') info.format = 'ALAC';
@@ -570,6 +584,96 @@ async function parseMp4(src: ByteSource, info: TrackInfo): Promise<void> {
   };
   walk(moov, 8, moov.length, visit);
   if (info.durationSec) info.bitrateKbps = Math.round((src.size * 8) / info.durationSec / 1000);
+}
+
+// ---------------------------------------------------------------- Matroska / WebM (EBML)
+/** Reads an EBML variable-size number at o: [value, length in bytes]; value -1 = unknown size. */
+function vint(b: Uint8Array, o: number, keepMarker = false): [number, number] {
+  const first = b[o];
+  if (first === undefined || first === 0) return [-1, 1];
+  let len = 1;
+  while (!(first & (0x80 >> (len - 1)))) len++;
+  let v = keepMarker ? first : first & (0xff >> len);
+  for (let i = 1; i < len; i++) v = v * 256 + (b[o + i] ?? 0);
+  const allOnes = !keepMarker && v === 2 ** (7 * len) - 1;
+  return [allOnes ? -1 : v, len];
+}
+
+/** Calls cb(id, dataStart, dataEnd) for each element in [start, end). Stops at unknown-size elements. */
+function ebml(
+  b: Uint8Array,
+  start: number,
+  end: number,
+  cb: (id: number, s: number, e: number) => void,
+): void {
+  let p = start;
+  while (p < end) {
+    const [id, il] = vint(b, p, true);
+    const [size, sl] = vint(b, p + il);
+    const s = p + il + sl;
+    const e = size < 0 ? end : Math.min(end, s + size);
+    cb(id, s, e);
+    if (size < 0) return;
+    p = s + size;
+  }
+}
+
+const uintAt = (b: Uint8Array, s: number, e: number) => {
+  let v = 0;
+  for (let i = s; i < e; i++) v = v * 256 + b[i]!;
+  return v;
+};
+
+function parseMatroska(b: Uint8Array, info: TrackInfo): void {
+  info.format = 'MKV';
+  let scale = 1_000_000; // ns per timestamp unit
+  let duration = 0;
+  let sawTracks = false;
+  ebml(b, 0, b.length, (id, s, e) => {
+    if (id === 0x1a45dfa3) {
+      ebml(b, s, e, (cid, cs, ce) => {
+        if (cid === 0x4282 && latin1.decode(b.subarray(cs, ce)).replace(/\0.*$/s, '') === 'webm')
+          info.format = 'WebM';
+      });
+    } else if (id === 0x18538067) {
+      ebml(b, s, e, (sid, ss, se) => {
+        if (sid === 0x1549a966) {
+          ebml(b, ss, se, (iid, is, ie) => {
+            if (iid === 0x2ad7b1) scale = uintAt(b, is, ie) || scale;
+            else if (iid === 0x4489 && ie - is === 4)
+              duration = new DataView(b.buffer, b.byteOffset + is, 4).getFloat32(0);
+            else if (iid === 0x4489 && ie - is === 8)
+              duration = new DataView(b.buffer, b.byteOffset + is, 8).getFloat64(0);
+          });
+        } else if (sid === 0x1654ae6b) {
+          sawTracks = true;
+          info.hasVideo ??= false;
+          ebml(b, ss, se, (tid, ts, te) => {
+            if (tid !== 0xae) return; // TrackEntry
+            ebml(b, ts, te, (fid, fs, fe) => {
+              const kind = fid === 0x83 ? uintAt(b, fs, fe) : 0;
+              if (kind === 1) info.hasVideo = true;
+              else if (fid === 0xe1) {
+                ebml(b, fs, fe, (aid, as, ae) => {
+                  if (aid === 0x9f) info.channels ??= uintAt(b, as, ae);
+                  else if (aid === 0xb5 && ae - as === 8)
+                    info.sampleRate ??= Math.round(
+                      new DataView(b.buffer, b.byteOffset + as, 8).getFloat64(0),
+                    );
+                  else if (aid === 0xb5 && ae - as === 4)
+                    info.sampleRate ??= Math.round(
+                      new DataView(b.buffer, b.byteOffset + as, 4).getFloat32(0),
+                    );
+                });
+              }
+            });
+          });
+        }
+      });
+    }
+  });
+  if (duration > 0) info.durationSec = (duration * scale) / 1e9;
+  if (!sawTracks) delete info.hasVideo;
 }
 
 // ---------------------------------------------------------------- WAV
@@ -632,6 +736,7 @@ export async function readTrackInfo(src: ByteSource): Promise<TrackInfo> {
     if (magic === 'fLaC') parseFlac(head, start, info, src.size);
     else if (magic === 'OggS') await parseOgg(src, head, info);
     else if (ascii(head, 4, 4) === 'ftyp') await parseMp4(src, info);
+    else if (be32(head, 0) === 0x1a45dfa3) parseMatroska(head, info);
     else if (magic === 'RIFF' && ascii(head, 8, 4) === 'WAVE') parseWav(head, info, src.size);
     else {
       const tail = src.size >= 128 ? await src.read(src.size - 128, 128) : new Uint8Array(0);

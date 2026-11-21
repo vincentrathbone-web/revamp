@@ -35,7 +35,12 @@ function setup(scale = () => 1) {
   root = document.createElement('div');
   root.style.cssText = 'position:fixed;inset:0';
   document.body.appendChild(root);
-  const wins = { main: new Box('main', 116, true), eq: new Box('eq', 116), pl: new Box('pl', 232) };
+  const wins = {
+    main: new Box('main', 116, true),
+    eq: new Box('eq', 116),
+    pl: new Box('pl', 232),
+    video: new Box('video', 232), // added to the host only by the tests that need it
+  };
   let layouts = 0;
   const host = new BrowserHost(root, {
     scaleOf: (id) => (id === 'pl' ? 1 : scale()),
@@ -104,4 +109,40 @@ test('dragging the main window moves the docked group; others snap', () => {
   dispatchEvent(new PointerEvent('pointermove', { clientX: 300 + 270, clientY: 380 - 230 }));
   dispatchEvent(new PointerEvent('pointerup', {}));
   expect(host.position('pl')).toEqual({ x: 515, y: 140 }); // right edge and top edge both snap
+});
+
+test('an overlay follows its window, scales with it, and goes fullscreen and back', () => {
+  const { host, wins } = setup();
+  host.add(wins.video, 400, 40);
+  host.render(true);
+  const el = document.createElement('div');
+  host.setOverlay('video', el, () => ({ x: 11, y: 20, w: 256, h: 174 }));
+  // measured against the window's canvas (this test page has no app stylesheet, so windows sit in page flow)
+  const box = () => {
+    const r = el.getBoundingClientRect();
+    const c = host.canvasOf('video')!.getBoundingClientRect();
+    return [r.left - c.left, r.top - c.top, r.width, r.height];
+  };
+  expect(el.parentElement?.dataset.win).toBe('video');
+  expect(getComputedStyle(el).pointerEvents).toBe('none'); // clicks reach the window underneath
+  expect(box()).toEqual([11, 20, 256, 174]);
+  host.setPosition('video', 420, 50);
+  expect(box()).toEqual([11, 20, 256, 174]); // moves with its window
+
+  let input = '';
+  const area = host.enterFullscreen('video', (kind) => (input = kind))!;
+  expect(host.fullscreen).toBe(true);
+  expect(area).toEqual(host.screen);
+  expect(host.hitTest(5, 5)).toBe(true); // the whole screen is taken
+  const fr = el.getBoundingClientRect();
+  expect([fr.left, fr.top, fr.width, fr.height]).toEqual([area.x, area.y, area.w, area.h]);
+  el.parentElement!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
+  expect(input).toBe('dblclick');
+  host.exitFullscreen();
+  expect(host.fullscreen).toBe(false);
+  expect(el.parentElement?.dataset.win).toBe('video');
+  expect(box()).toEqual([11, 20, 256, 174]);
+
+  host.setOverlay('video', null);
+  expect(el.isConnected).toBe(false);
 });

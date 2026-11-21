@@ -12,6 +12,7 @@ import {
   type PlaylistColors,
   type Regions,
 } from './textfiles';
+import { videoSheetFromPledit } from './video-sheet';
 
 export interface Skin {
   name: string;
@@ -43,6 +44,7 @@ export const SHEET_SIZES: Record<Sheet, [number, number]> = {
   eqmain: [275, 315],
   eq_ex: [275, 56],
   pledit: [280, 186],
+  video: [233, 119],
 };
 
 const MAX_FILE = 8 * 1024 * 1024;
@@ -137,6 +139,8 @@ export function skinFromFiles(name: string, files: Map<string, Uint8Array>, fall
     const m = /^(.+)\.(cur|ani)$/.exec(k);
     if (m) cursors[m[1]!] = v;
   }
+  // Few skins have video.bmp: build one from the skin's own playlist frame so the video window matches.
+  if (!found.has('video') && found.has('pledit')) sheets.video = videoSheetFromPledit(sheets.pledit);
   return { name, sheets, playlist, vis, regions, cursors, hasNumsEx: found.has('nums_ex'), warnings };
 }
 

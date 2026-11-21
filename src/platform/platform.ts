@@ -28,10 +28,18 @@ export const AUDIO_EXTENSIONS = [
   'aif',
   'aiff',
 ];
+/** Containers that normally hold a picture. (.mp4 and .webm are in the audio list: their header decides.) */
+export const VIDEO_EXTENSIONS = ['m4v', 'mkv', 'mov', 'ogv'];
+export const MEDIA_EXTENSIONS = [...AUDIO_EXTENSIONS, ...VIDEO_EXTENSIONS];
 export const PLAYLIST_EXTENSIONS = ['m3u', 'm3u8', 'pls', 'xspf', 'b4s'];
 
 export const extOf = (name: string) => name.toLowerCase().split('.').pop() ?? '';
 export const isAudio = (name: string) => AUDIO_EXTENSIONS.includes(extOf(name));
+/** Anything RevAmp can play: audio or video. */
+export const isMedia = (name: string) => MEDIA_EXTENSIONS.includes(extOf(name));
+/** Should this file play as video? The header (`hasVideo`, once read) wins over the extension. */
+export const playsAsVideo = (name: string, hasVideo: boolean | undefined) =>
+  hasVideo ?? VIDEO_EXTENSIONS.includes(extOf(name.split(/[?#]/)[0]!));
 export const isPlaylist = (name: string) => PLAYLIST_EXTENSIONS.includes(extOf(name));
 export const isSkin = (name: string) => ['wsz', 'zip'].includes(extOf(name));
 
@@ -47,6 +55,11 @@ export interface Platform {
   /** Called once with the crash report text. */
   writeCrashReport(text: string): void;
   setAlwaysOnTop?(on: boolean): void;
+  /**
+   * Desktop app: makes the page cover the whole monitor around page point (x, y), taskbar included, for fullscreen
+   * video (true = the page now is that monitor), or puts it back over the work areas (on = false).
+   */
+  fullscreenMonitor?(on: boolean, x: number, y: number): Promise<boolean>;
   minimize?(): void;
   quit?(): void;
 }

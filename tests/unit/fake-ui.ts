@@ -6,6 +6,7 @@ import type { UiContext, UiState } from '../../src/ui/context';
 import { EqWindow } from '../../src/ui/eq-window';
 import { MainWindow } from '../../src/ui/main-window';
 import { PlaylistWindow } from '../../src/ui/playlist-window';
+import { VideoWindow } from '../../src/ui/video-window';
 import { Visualizer } from '../../src/ui/vis';
 import type { SkinnedWindow, WindowId } from '../../src/ui/window';
 
@@ -38,6 +39,7 @@ export function fakeUi(skin: Skin, patch: Partial<UiState> = {}) {
     shade: { main: false, eq: false, pl: false },
     eq: { ...defaultEq(), bandsDb: [6, 4, 2, 0, -2, -4, -2, 0, 2, 4], preampDb: -3 },
     plSize: { w: 275, h: 232 },
+    videoSize: { w: 275, h: 232 },
     clock: 0,
     flash: null,
     ...patch,
@@ -77,12 +79,18 @@ export function fakeUi(skin: Skin, patch: Partial<UiState> = {}) {
     setEq: (eq) => ((state.eq = eq), calls.push('setEq')),
     playIndex: rec('playIndex'),
     setPlaylistSize: rec('setPlaylistSize'),
+    setVideoSize: rec('setVideoSize'),
+    videoCommand: rec('videoCommand'),
     flash: () => {},
   };
   return { ui, calls, state };
 }
 
 export function windowsFor(ui: UiContext): Record<WindowId, SkinnedWindow> {
-  return { main: new MainWindow(ui), eq: new EqWindow(ui), pl: new PlaylistWindow(ui) };
+  return {
+    main: new MainWindow(ui),
+    eq: new EqWindow(ui),
+    pl: new PlaylistWindow(ui),
+    video: new VideoWindow(ui),
+  };
 }
-

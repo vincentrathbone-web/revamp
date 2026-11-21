@@ -182,8 +182,49 @@ for (const [src, dst, args] of encodes) {
   else console.warn(`ffmpeg failed for ${dst}: ${r.error?.message ?? r.stderr}`);
 }
 
+// Small videos: a 2 s generated test picture (160x120, 25 fps) with the 1 kHz tone, plus one audio-only WebM.
+const videos = [
+  [
+    'video.mp4',
+    ['-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '96k'],
+  ],
+  ['video.webm', ['-c:v', 'libvpx-vp9', '-b:v', '200k', '-c:a', 'libopus', '-b:a', '64k']],
+  [
+    'video.mkv',
+    ['-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-b:a', '96k'],
+  ],
+  ['audio-only.webm', ['-vn', '-c:a', 'libopus', '-b:a', '64k']],
+];
+for (const [dst, args] of videos) {
+  const r = spawnSync(
+    ffmpeg,
+    [
+      '-y',
+      '-v',
+      'error',
+      '-f',
+      'lavfi',
+      '-i',
+      'testsrc2=size=160x120:rate=25:duration=2',
+      '-i',
+      join(OUT, 'tone1k.wav'),
+      '-t',
+      '2',
+      '-map_metadata',
+      '-1',
+      '-fflags',
+      '+bitexact',
+      ...args,
+      join(OUT, dst),
+    ],
+    { encoding: 'utf8' },
+  );
+  if (r.status === 0) encoded++;
+  else console.warn(`ffmpeg failed for ${dst}: ${r.error?.message ?? r.stderr}`);
+}
+
 const manifest = {};
-for (const name of [...Object.keys(files), ...encodes.map((e) => e[1])]) {
+for (const name of [...Object.keys(files), ...encodes.map((e) => e[1]), ...videos.map((v) => v[0])]) {
   const p = join(OUT, name);
   if (existsSync(p)) manifest[name] = createHash('sha256').update(readFileSync(p)).digest('hex');
 }

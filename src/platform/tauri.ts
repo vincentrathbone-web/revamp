@@ -100,6 +100,31 @@ export class TauriPlatform implements Platform {
     void this.win.setAlwaysOnTop(on);
   }
 
+  async fullscreenMonitor(on: boolean, x: number, y: number): Promise<boolean> {
+    if (!theApp || !fitted) return false;
+    if (!on) {
+      videoFullscreen = false;
+      fitted = { ...fitted, key: '' }; // same origin, so player windows keep their place
+      await fitMonitors(theApp);
+      return true;
+    }
+    const px = fitted.x + x * fitted.scale,
+      py = fitted.y + y * fitted.scale;
+    const mons = await availableMonitors();
+    const m = mons.find(
+      (m) =>
+        px >= m.position.x &&
+        py >= m.position.y &&
+        px < m.position.x + m.size.width &&
+        py < m.position.y + m.size.height,
+    );
+    if (!m) return false;
+    videoFullscreen = true;
+    await this.win.setPosition(new PhysicalPosition(m.position.x, m.position.y));
+    await this.win.setSize(new PhysicalSize(m.size.width, m.size.height));
+    return true;
+  }
+
   minimize(): void {
     void this.win.minimize();
   }
@@ -111,6 +136,9 @@ export class TauriPlatform implements Platform {
 
 type Area = { position: { x: number; y: number }; size: { width: number; height: number } };
 let fitted: { key: string; x: number; y: number; scale: number } | null = null;
+/** While a video is fullscreen the window covers one whole monitor; the monitor check must not undo that. */
+let videoFullscreen = false;
+let theApp: App | null = null;
 
 /**
  * Makes the transparent window cover the work areas of all monitors (their bounding box) and tells the window
@@ -120,6 +148,7 @@ let fitted: { key: string; x: number; y: number; scale: number } | null = null;
  * smaller on one of them.
  */
 async function fitMonitors(app: App): Promise<void> {
+  if (videoFullscreen) return;
   const win = getCurrentWindow();
   const mons = await availableMonitors();
   if (!mons.length) {
@@ -141,7 +170,7 @@ async function fitMonitors(app: App): Promise<void> {
     // keep the player windows where they are on screen
     const dx = (fitted.x - x0) / scale,
       dy = (fitted.y - y0) / scale;
-    for (const id of ['main', 'eq', 'pl'] as const) {
+    for (const id of ['main', 'eq', 'pl', 'video'] as const) {
       const p = app.host.position(id);
       app.host.setPosition(id, p.x + dx, p.y + dy);
     }
@@ -161,6 +190,7 @@ async function fitMonitors(app: App): Promise<void> {
 /** Fits the window to the monitors, shows it, and starts click-through and file drop handling. */
 export async function startDesktop(app: App, platform: TauriPlatform): Promise<void> {
   document.documentElement.classList.add('native');
+  theApp = app;
   const win = getCurrentWindow();
   await fitMonitors(app);
   await win.show();

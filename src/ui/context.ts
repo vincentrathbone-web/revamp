@@ -4,7 +4,10 @@ import type { PlayState } from '../audio/engine';
 import type { Playlist } from '../playlist/model';
 import type { Skin } from '../skin/skin';
 import type { Visualizer } from './vis';
-import type { WindowId } from './window';
+import type { ShadeId, WindowId } from './window';
+
+/** What the video window's buttons and menu ask for. */
+export type VideoCommand = 'fullscreen' | 'zoom1' | 'zoom2' | 'stretch';
 
 export interface UiState {
   playState: PlayState;
@@ -23,9 +26,10 @@ export interface UiState {
   alwaysOnTop: boolean;
   doubleSize: boolean;
   timeRemaining: boolean;
-  shade: Record<WindowId, boolean>;
+  shade: Record<ShadeId, boolean>;
   eq: EqState;
   plSize: { w: number; h: number };
+  videoSize: { w: number; h: number };
   /** Seconds-since-start counter used for blinking and scrolling. */
   clock: number;
   /** Status message shown in the title area for a moment (e.g. "VOLUME: 50%"). */
@@ -43,7 +47,8 @@ export type MenuKind =
   | 'plMisc'
   | 'plList'
   | 'plItem'
-  | 'skins';
+  | 'skins'
+  | 'video';
 
 export interface UiContext {
   readonly skin: Skin;
@@ -66,7 +71,7 @@ export interface UiContext {
   toggleRepeat(): void;
   toggleWindow(id: 'eq' | 'pl'): void;
   closeWindow(id: WindowId): void;
-  toggleShade(id: WindowId): void;
+  toggleShade(id: ShadeId): void;
   minimize(): void;
   toggleAlwaysOnTop(): void;
   toggleDoubleSize(): void;
@@ -77,5 +82,7 @@ export interface UiContext {
   setEq(eq: EqState): void;
   playIndex(i: number): void;
   setPlaylistSize(w: number, h: number): void;
+  setVideoSize(w: number, h: number): void;
+  videoCommand(cmd: VideoCommand): void;
   flash(text: string): void;
 }

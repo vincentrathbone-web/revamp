@@ -17,7 +17,8 @@ export type Sheet =
   | 'shufrep'
   | 'eqmain'
   | 'eq_ex'
-  | 'pledit';
+  | 'pledit'
+  | 'video';
 
 export const SHEETS: Sheet[] = [
   'main',
@@ -35,10 +36,11 @@ export const SHEETS: Sheet[] = [
   'eqmain',
   'eq_ex',
   'pledit',
+  'video',
 ];
 
-/** Sheets a skin may leave out (we fall back to another sheet or the default skin). */
-export const OPTIONAL_SHEETS: Sheet[] = ['nums_ex', 'eq_ex', 'balance'];
+/** Sheets a skin may leave out (we fall back to another sheet, build one, or use the default skin's). */
+export const OPTIONAL_SHEETS: Sheet[] = ['nums_ex', 'eq_ex', 'balance', 'video'];
 
 export interface Sprite {
   sheet: Sheet;
@@ -343,6 +345,32 @@ export const PL_MENUS = {
     items: [mi('newList', 204, 111), mi('saveList', 204, 130), mi('loadList', 204, 149)],
   },
 } as const;
+
+// ---------------------------------------------------------------- video window (video.bmp, 233x119)
+const vTop = (y: number) => ({
+  left: s('video', 0, y, 25, 20),
+  title: s('video', 26, y, 100, 20),
+  fill: s('video', 127, y, 25, 20),
+  right: s('video', 153, y, 25, 20),
+});
+export const VIDEO = {
+  topActive: vTop(0),
+  topInactive: vTop(21),
+  left: s('video', 127, 42, 11, 29),
+  right: s('video', 139, 42, 8, 29),
+  bottomLeft: s('video', 0, 42, 125, 38),
+  bottomRight: s('video', 0, 81, 125, 38),
+  bottomFill: s('video', 127, 81, 25, 38),
+  closeBtnDown: s('video', 148, 42, 9, 9),
+  /** Bottom-bar buttons (fullscreen, 1x, 2x, stretch, menu), 15x18 each, drawn at (9 + i*15, h - 29). */
+  button: (i: number) => s('video', 9 + i * 15, 51, 15, 18),
+  buttonDown: (i: number) => s('video', 158 + i * 15, 42, 15, 18),
+} as const;
+export const VIDEO_BUTTONS = 5;
+/** The picture area inside a w x h video window. */
+export const videoArea = (w: number, h: number) => ({ x: 11, y: 20, w: w - 19, h: h - 58 });
+export const VIDEO_MIN_W = 275;
+export const VIDEO_MIN_H = 116;
 
 export const PL_MIN_W = 275;
 export const PL_MIN_H = 116;

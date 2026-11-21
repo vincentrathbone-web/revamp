@@ -8,7 +8,18 @@ import { getPixel } from '../../src/skin/image';
 import { insideRegions, parseIni, parsePledit, parseRegion, parseViscolor } from '../../src/skin/textfiles';
 import { SHEET_SIZES, skinFromArchive } from '../../src/skin/skin';
 import { defaultSkin } from '../../src/skin/default-skin';
-import { MAIN, PL, EQ, SHEETS, eqSliderFrame, glyph, volumeFrame, type Sprite } from '../../src/skin/sprites';
+import {
+  MAIN,
+  PL,
+  EQ,
+  SHEETS,
+  VIDEO,
+  VIDEO_BUTTONS,
+  eqSliderFrame,
+  glyph,
+  volumeFrame,
+  type Sprite,
+} from '../../src/skin/sprites';
 
 /** Builds a BMP for tests (bottom-up unless height < 0). */
 function bmp(
@@ -261,5 +272,53 @@ describe('window shapes (region.txt)', () => {
     for (let y = 0; y < 32; y++)
       for (let x = 0; x < 32; x++)
         expect(m[y * 32 + x], `${x},${y}`).toBe(insideRegions(polys, x, y) ? 1 : 0);
+  });
+});
+
+describe('video window sheet', () => {
+  /** Distinct colour per pledit pixel, so copied pixels can be traced back. */
+  const plPixel = (x: number, y: number) => ((x * 7) & 0xff) | (((y * 5) & 0xff) << 8) | 0x400000;
+  const rgb = (v: number) => [(v >> 16) & 255, (v >> 8) & 255, v & 255, 255];
+  const sheetOf = (files: Record<string, Uint8Array>) =>
+    skinFromArchive('t', zipSync(files), defaultSkin()).sheets.video;
+
+  test('a skin without video.bmp gets a frame built from its own playlist art', () => {
+    const v = sheetOf({ 'pledit.bmp': bmp(280, 186, 24, plPixel) });
+    expect([v.width, v.height]).toEqual(SHEET_SIZES.video);
+    // title-bar corners come straight from the playlist's
+    expect(getPixel(v, VIDEO.topActive.left.x + 3, 2)).toEqual(rgb(plPixel(PL.topLeft.x + 3, 2)));
+    expect(getPixel(v, VIDEO.topInactive.right.x + 20, 21 + 15)).toEqual(
+      rgb(plPixel(PL.topRightInactive.x + 20, PL.topRightInactive.y + 15)),
+    );
+    // the title piece is title-bar fill, not the playlist's PLAYLIST title
+    expect(getPixel(v, VIDEO.topActive.title.x + 30, 5)).toEqual(rgb(plPixel(PL.topFill.x + 5, 5)));
+    // the right border is the outer 8 px of the playlist's right border
+    expect(getPixel(v, VIDEO.right.x, VIDEO.right.y + 4)).toEqual(
+      rgb(plPixel(PL.right.x + PL.right.w - 8, PL.right.y + 4)),
+    );
+    // every bottom button looks different pressed
+    for (let i = 0; i < VIDEO_BUTTONS; i++) {
+      const up = VIDEO.button(i),
+        down = VIDEO.buttonDown(i);
+      let same = true;
+      for (let y = 0; y < up.h; y++)
+        for (let x = 0; x < up.w; x++)
+          if (getPixel(v, up.x + x, up.y + y).join() !== getPixel(v, down.x + x, down.y + y).join())
+            same = false;
+      expect(same, `button ${i}`).toBe(false);
+    }
+  });
+
+  test("a skin's own video.bmp is used as it is", () => {
+    const v = sheetOf({
+      'pledit.bmp': bmp(280, 186, 24, plPixel),
+      'video.bmp': bmp(233, 119, 24, () => 0x123456),
+    });
+    expect(getPixel(v, 40, 60)).toEqual([0x12, 0x34, 0x56, 255]);
+  });
+
+  test('built-in skins have a video sheet', () => {
+    const v = defaultSkin().sheets.video;
+    expect([v.width, v.height]).toEqual(SHEET_SIZES.video);
   });
 });
