@@ -52,7 +52,11 @@ export class BrowserHost {
         this.opts.onLayout();
       }
     });
-    addEventListener('resize', () => this.keepAllOnScreen());
+    addEventListener('resize', () => {
+      // display scaling may have changed (zoom, other monitor): re-apply sizes
+      for (const h of this.wins.values()) this.applyGeometry(h);
+      this.keepAllOnScreen();
+    });
   }
 
   get screen(): Rect {
@@ -96,7 +100,7 @@ export class BrowserHost {
 
   private local(h: Hosted, e: MouseEvent) {
     const r = h.canvas.getBoundingClientRect();
-    const s = this.opts.scaleOf(h.win.id);
+    const s = this.scale(h.win.id);
     return { x: Math.floor((e.clientX - r.left) / s), y: Math.floor((e.clientY - r.top) / s) };
   }
 
@@ -119,7 +123,7 @@ export class BrowserHost {
         resizing?: boolean;
         resizeMove?: (x: number, y: number, s: number) => void;
       };
-      if (win.resizing && win.resizeMove) win.resizeMove(e.screenX, e.screenY, this.opts.scaleOf(id));
+      if (win.resizing && win.resizeMove) win.resizeMove(e.screenX, e.screenY, this.scale(id));
       else h.win.pointerMove(this.local(h, e));
     });
     c.addEventListener('pointerup', (e) => {
@@ -155,16 +159,29 @@ export class BrowserHost {
     for (const h of this.wins.values()) h.win.invalidate();
   }
 
+  /**
+   * Skin pixels -> CSS px. With fractional display scaling (125 %, 150 %, ...) the factor is rounded so every skin
+   * pixel covers a whole number of screen pixels; otherwise pixel art gets uneven, blurry pixels.
+   */
+  scale(id: WindowId): number {
+    const s = this.opts.scaleOf(id);
+    const dpr = typeof devicePixelRatio === 'number' && devicePixelRatio > 0 ? devicePixelRatio : 1;
+    return Number.isInteger(dpr) ? s : Math.max(1, Math.round(s * dpr)) / dpr;
+  }
+
   private sizeOf(h: Hosted): { w: number; h: number } {
     const s = h.win.size();
-    const k = this.opts.scaleOf(h.win.id);
+    const k = this.scale(h.win.id);
     return { w: s.w * k, h: s.h * k };
   }
 
   /** Applies position (and size, unless only moving: sizeChanged needs the old size to reflow docked windows). */
   private applyGeometry(h: Hosted, moveOnly = false): void {
     const { w, h: hh } = moveOnly && h.rect.w ? h.rect : this.sizeOf(h);
-    h.el.style.transform = `translate(${h.x}px, ${h.y}px)`;
+    // whole screen pixels, so the window doesn't straddle pixel boundaries on scaled displays
+    const dpr = typeof devicePixelRatio === 'number' && devicePixelRatio > 0 ? devicePixelRatio : 1;
+    const snapPx = (v: number) => Math.round(v * dpr) / dpr;
+    h.el.style.transform = `translate(${snapPx(h.x)}px, ${snapPx(h.y)}px)`;
     h.el.style.display = h.visible ? '' : 'none';
     h.canvas.style.width = `${w}px`;
     h.canvas.style.height = `${hh}px`;
@@ -290,7 +307,7 @@ export class BrowserHost {
       if (!h.visible) continue;
       const { w, h: hh } = this.sizeOf(h);
       if (x < h.x || y < h.y || x >= h.x + w || y >= h.y + hh) continue;
-      const s = this.opts.scaleOf(h.win.id);
+      const s = this.scale(h.win.id);
       if (this.opts.inside(h.win.id, Math.floor((x - h.x) / s), Math.floor((y - h.y) / s))) return true;
     }
     return false;
