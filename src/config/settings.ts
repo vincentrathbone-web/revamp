@@ -33,8 +33,19 @@ export interface UiSettings {
   outputDevice: string;
 }
 
+/** Explorer integration (desktop app, Windows): see src-tauri/src/shell.rs. */
+export interface ShellSettings {
+  /** "Play in RevAmp" / "Enqueue in RevAmp" on music, video and playlist files. */
+  files: boolean;
+  /** The same on folders. */
+  folders: boolean;
+  /** When RevAmp is the default player, a double-click enqueues instead of playing. */
+  enqueueDefault: boolean;
+}
+
 export interface Settings {
   version: number;
+  shell: ShellSettings;
   audio: AudioSettings;
   ui: UiSettings;
   userPresets: Preset[];
@@ -49,6 +60,7 @@ export interface Settings {
 export function defaultSettings(): Settings {
   return {
     version: SETTINGS_VERSION,
+    shell: { files: true, folders: true, enqueueDefault: false },
     audio: defaultAudioSettings(),
     ui: {
       positions: {

@@ -150,7 +150,7 @@ export class App implements UiContext {
     addEventListener('keydown', (e) => this.onKey(e));
     addEventListener('beforeunload', () => this.saveNow());
     // restore remembered playlist entries the platform can reach
-    void this.restorePlaylist();
+    this.restored = this.restorePlaylist().catch((e) => log.warn('playlist restore failed', e));
     requestAnimationFrame(() => this.frame());
   }
 
@@ -661,6 +661,26 @@ export class App implements UiContext {
   }
 
   /** Adds audio files and playlists. Skins dropped here are loaded instead. */
+  /** Resolves once the playlist of the last session is back. */
+  readonly restored: Promise<void>;
+  private lastPlayLaunch = -Infinity;
+
+  /**
+   * Files from Explorer's "Play in RevAmp" / "Enqueue in RevAmp" or the command line. Explorer starts RevAmp once
+   * per selected file, so "Play" starts arriving close together form one new list instead of replacing each other.
+   */
+  async launch(mode: 'play' | 'enqueue', files: FileRef[]): Promise<void> {
+    await this.restored;
+    if (!files.length) return;
+    if (mode === 'play') {
+      const now = performance.now();
+      const sameBurst = now - this.lastPlayLaunch < 1500;
+      this.lastPlayLaunch = now;
+      return this.addFiles(files, !sameBurst, !sameBurst);
+    }
+    return this.addFiles(files, false, this.engine.state === 'stopped' && !this.playlist.length);
+  }
+
   async addFiles(files: FileRef[], replace: boolean, play: boolean): Promise<void> {
     const skin = files.find((f) => isSkin(f.name));
     if (skin) return this.loadSkinFile(skin);

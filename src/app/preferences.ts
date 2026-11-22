@@ -349,6 +349,65 @@ export function openPreferences(app: App): void {
     ),
   ]);
 
+  const platform = app.platform;
+  if (platform.registerShell) {
+    const sh = s.shell;
+    const status = document.createElement('p');
+    status.className = 'rv-pref-note';
+    const apply = () => {
+      app.scheduleSave();
+      status.textContent = 'Saving…';
+      platform.registerShell!(sh, true).then(
+        () => (status.textContent = 'Explorer is up to date.'),
+        (e: unknown) => (status.textContent = String(e)),
+      );
+    };
+    const defaults = document.createElement('button');
+    defaults.type = 'button';
+    defaults.textContent = 'Make RevAmp the default player…';
+    defaults.addEventListener('click', () => {
+      // Windows only lets the user choose the default player; this opens that page with RevAmp selected
+      void platform.openDefaultApps?.().catch((e: unknown) => (status.textContent = String(e)));
+    });
+    const hint = document.createElement('p');
+    hint.className = 'rv-pref-note';
+    hint.textContent =
+      'Windows lets only you choose the default player. The button opens Settings › Default apps for RevAmp, ' +
+      'where "Set default" covers every type it plays. In Windows 11 the Explorer entries are under ' +
+      '"Show more options".';
+    tabs.push([
+      'File types',
+      section(
+        'Explorer',
+        row(
+          'Play / Enqueue on music, video and playlist files',
+          check(
+            () => sh.files,
+            (v) => ((sh.files = v), apply()),
+          ),
+        ),
+        row(
+          'Play / Enqueue on folders',
+          check(
+            () => sh.folders,
+            (v) => ((sh.folders = v), apply()),
+          ),
+        ),
+        row(
+          'Double-click enqueues instead of playing',
+          check(
+            () => sh.enqueueDefault,
+            (v) => ((sh.enqueueDefault = v), apply()),
+          ),
+          'When RevAmp is the default player',
+        ),
+        defaults,
+        hint,
+        status,
+      ),
+    ]);
+  }
+
   const body = document.createElement('div');
   body.className = 'rv-prefs';
   const nav = document.createElement('div');

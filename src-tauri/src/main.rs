@@ -3,9 +3,15 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use tauri::Manager;
+use std::sync::Mutex;
+use tauri::{Emitter, Manager};
 
 mod convert;
+mod shell;
+
+/// Files from the command line and from later starts (Explorer's Play/Enqueue), waiting for the page.
+#[derive(Default)]
+struct Launches(Mutex<Vec<shell::Launch>>);
 
 const EXTENSIONS: &[&str] = &[
     "mp3", "mp2", "mp1", "flac", "ogg", "oga", "opus", "m4a", "mp4", "aac", "wav", "webm", "aif", "aiff", "m4v",
@@ -77,15 +83,92 @@ fn self_test() -> Option<(String, String)> {
     Some((std::env::var("REVAMP_SELFTEST").ok()?, std::env::var("REVAMP_SELFTEST_OUT").ok()?))
 }
 
+/// The files waiting to be played or enqueued (the page asks after a "launch" event and once at start).
+#[tauri::command]
+fn take_launches(state: tauri::State<'_, Launches>) -> Vec<shell::Launch> {
+    std::mem::take(&mut *state.0.lock().unwrap())
+}
+
+/// Writes the Explorer entries for these options (skipped when they are already in place, unless `force`).
+/// Debug builds leave Explorer alone unless REVAMP_SHELL=1, so a test build never takes over the menus.
+#[tauri::command]
+fn shell_register(options: shell::ShellOptions, force: bool) -> Result<bool, String> {
+    if cfg!(debug_assertions) && std::env::var("REVAMP_SHELL").as_deref() != Ok("1") {
+        return Err("This is a test build: it doesn't change Explorer (set REVAMP_SHELL=1 to allow).".into());
+    }
+    #[cfg(windows)]
+    {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let changed = shell::registry::register("Software", &exe.to_string_lossy(), &options, force)
+            .map_err(|e| e.to_string())?;
+        if changed {
+            shell::registry::notify_explorer();
+        }
+        Ok(changed)
+    }
+    #[cfg(not(windows))]
+    Err("Only on Windows".into())
+}
+
+/// Opens Windows' Default apps page for RevAmp, where the user can make it the default player.
+#[tauri::command]
+fn open_default_apps() -> Result<(), String> {
+    std::process::Command::new("explorer.exe")
+        .arg("ms-settings:defaultapps?registeredAppUser=RevAmp")
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
+}
+
+/// `revamp.exe --register` / `--unregister` (run by the installer and uninstaller): writes or removes the
+/// Explorer entries and exits. --register keeps the user's earlier choices and only updates the program path.
+#[cfg(windows)]
+fn shell_cli(args: &[String]) -> i32 {
+    let result = if args.iter().any(|a| a == "--unregister") {
+        shell::registry::unregister("Software")
+    } else {
+        let options = shell::registry::current_stamp("Software")
+            .and_then(|s| shell::options_of_stamp(&s))
+            .unwrap_or_default();
+        std::env::current_exe()
+            .and_then(|exe| shell::registry::register("Software", &exe.to_string_lossy(), &options, true).map(|_| ()))
+    };
+    shell::registry::notify_explorer();
+    if result.is_ok() { 0 } else { 1 }
+}
+
 fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    #[cfg(windows)]
+    if args.iter().any(|a| a == "--register" || a == "--unregister") {
+        std::process::exit(shell_cli(&args));
+    }
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let first = shell::parse_launch(&args, &cwd);
+
     tauri::Builder::default()
+        // must be the first plugin: a second start hands its files to the running RevAmp and quits
+        .plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            let launch = shell::parse_launch(argv.get(1..).unwrap_or_default(), std::path::Path::new(&cwd));
+            if let Some(l) = launch {
+                app.state::<Launches>().0.lock().unwrap().push(l);
+                let _ = app.emit("launch", ());
+            }
+            if let Some(w) = app.get_webview_window("main") {
+                let _ = w.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_dialog::init())
+        .manage(Launches(Mutex::new(first.into_iter().collect())))
         .manage(convert::Converters::default())
         .invoke_handler(tauri::generate_handler![
             expand_paths,
             write_file,
             crash_report,
             self_test,
+            take_launches,
+            shell_register,
+            open_default_apps,
             convert::media_probe,
             convert::convert_open,
             convert::convert_read,

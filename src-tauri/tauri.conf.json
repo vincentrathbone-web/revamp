@@ -42,6 +42,11 @@
     "category": "Music",
     "resources": {
       "ffmpeg/*": "ffmpeg/"
+    },
+    "windows": {
+      "nsis": {
+        "installerHooks": "./windows/hooks.nsh"
+      }
     }
   }
 }

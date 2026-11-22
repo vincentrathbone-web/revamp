@@ -296,6 +296,13 @@ body {
   padding: 4px 0;
 }
 
+.rv-pref-note {
+  margin: 8px 0 0;
+  font-size: 12px;
+  opacity: 0.75;
+  max-width: 52ch;
+}
+
 .rv-pref-pair {
   display: inline-flex;
   align-items: center;

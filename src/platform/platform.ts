@@ -1,6 +1,7 @@
 /** What RevAmp needs from the host environment (browser page now, Tauri later). */
 import type { ByteSource } from '../audio/tags';
 import { CONVERT_EXTENSIONS, type Converter } from '../audio/convert';
+import type { ShellSettings } from '../config/settings';
 
 export interface FileRef {
   name: string;
@@ -66,6 +67,10 @@ export interface Platform {
    * video (true = the page now is that monitor), or puts it back over the work areas (on = false).
    */
   fullscreenMonitor?(on: boolean, x: number, y: number): Promise<boolean>;
+  /** Desktop app on Windows: Explorer's Play/Enqueue entries; true when they changed. */
+  registerShell?(options: ShellSettings, force: boolean): Promise<boolean>;
+  /** Desktop app on Windows: opens the Default apps settings page for RevAmp. */
+  openDefaultApps?(): Promise<void>;
   /** Plays what the web view can't (desktop app: the bundled FFmpeg). */
   converter?: Converter;
   minimize?(): void;

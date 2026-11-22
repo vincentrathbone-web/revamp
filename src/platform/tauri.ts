@@ -15,12 +15,14 @@ import {
   PhysicalPosition,
   PhysicalSize,
 } from '@tauri-apps/api/window';
+import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import type { App } from '../app/app';
 import { logger } from '../core/log';
 import { urlFileRef } from './browser';
 import type { FileRef, Platform } from './platform';
+import type { ShellSettings } from '../config/settings';
 import { parseProbe, type ByteReader, type Converter } from '../audio/convert';
 
 const log = logger('tauri');
@@ -80,6 +82,16 @@ export class TauriPlatform implements Platform {
     if (typeof dir !== 'string') return [];
     const paths = await invoke<string[]>('expand_paths', { paths: [dir] });
     return this.refs(paths);
+  }
+
+  /** Writes the Explorer entries (src-tauri/src/shell.rs). */
+  registerShell(options: ShellSettings, force: boolean): Promise<boolean> {
+    return invoke<boolean>('shell_register', { options, force });
+  }
+
+  /** Opens Windows' Default apps page for RevAmp. */
+  openDefaultApps(): Promise<void> {
+    return invoke('open_default_apps');
   }
 
   async refs(paths: string[]): Promise<FileRef[]> {
@@ -254,6 +266,23 @@ export async function startDesktop(app: App, platform: TauriPlatform): Promise<v
   void poll();
   void selfTest(app, platform);
 
+  // Files from Explorer (Play / Enqueue) or the command line. Later starts of revamp.exe hand theirs to this one.
+  let queue = Promise.resolve();
+  const drain = () =>
+    (queue = queue
+      .then(async () => {
+        const launches = await invoke<{ mode: 'play' | 'enqueue'; paths: string[] }[]>('take_launches');
+        for (const l of launches) {
+          const paths = await invoke<string[]>('expand_paths', { paths: l.paths });
+          await app.launch(l.mode, await platform.refs(paths));
+        }
+      })
+      .catch((e) => log.warn('could not open files', e)));
+  await listen('launch', () => void drain());
+  void drain();
+  // keep Explorer's entries pointing at this program (skipped when nothing changed; test builds leave them alone)
+  void platform.registerShell(app.settings.shell, false).catch((e) => log.debug('Explorer entries:', e));
+
   // files dropped from Explorer arrive as paths
   await getCurrentWebview().onDragDropEvent(async (e) => {
     if (e.payload.type !== 'drop') return;
@@ -270,6 +299,19 @@ async function selfTest(app: App, platform: TauriPlatform): Promise<void> {
   if (!cfg) return;
   const [file, out] = cfg;
   const report: Record<string, unknown> = { file, platform: platform.kind };
+  if (file === '-') {
+    // no file: report what command-line starts (Play / Enqueue) put in the playlist after a while
+    app.setVolume(0);
+    await new Promise((r) => setTimeout(r, Number(import.meta.env.VITE_SELFTEST_WAIT ?? 9000)));
+    report.playlist = app.playlist.entries.map((e) => e.location);
+    report.current = app.playlist.current;
+    report.state = app.engine.state;
+    app.stop();
+    return invoke('write_file', {
+      path: out,
+      data: Array.from(new TextEncoder().encode(JSON.stringify(report, null, 2))),
+    });
+  }
   try {
     const ref = await platform.resolve(file);
     report.resolved = !!ref;
