@@ -223,8 +223,37 @@ for (const [dst, args] of videos) {
   else console.warn(`ffmpeg failed for ${dst}: ${r.error?.message ?? r.stderr}`);
 }
 
+// Old formats the web view can't play (for the FFmpeg converter): 10 s, 320x240, key frames every 2 s (FLV: 4 s).
+const oldClips = [
+  ['clip.avi', ['-c:v', 'mpeg4', '-g', '50', '-c:a', 'libmp3lame', '-b:a', '128k']],
+  ['clip.wmv', ['-c:v', 'wmv2', '-g', '50', '-c:a', 'wmav2', '-b:a', '128k']],
+  ['clip.flv', ['-c:v', 'libx264', '-preset', 'veryfast', '-pix_fmt', 'yuv420p', '-g', '100', '-c:a', 'aac']],
+  [
+    'tone.wma',
+    ['-vn', '-c:a', 'wmav2', '-b:a', '128k', '-metadata', 'title=WMA Tone', '-metadata', 'artist=RevAmp Lab'],
+  ],
+];
+for (const [dst, args] of oldClips) {
+  const r = spawnSync(
+    ffmpeg,
+    [
+      ...['-y', '-v', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=320x240:rate=25:duration=10'],
+      ...['-f', 'lavfi', '-i', 'sine=frequency=440:sample_rate=44100:duration=10', '-t', '10'],
+      ...['-map_metadata', '-1', '-fflags', '+bitexact', ...args, join(OUT, dst)],
+    ],
+    { encoding: 'utf8' },
+  );
+  if (r.status === 0) encoded++;
+  else console.warn(`ffmpeg failed for ${dst}: ${r.error?.message ?? r.stderr}`);
+}
+
 const manifest = {};
-for (const name of [...Object.keys(files), ...encodes.map((e) => e[1]), ...videos.map((v) => v[0])]) {
+for (const name of [
+  ...Object.keys(files),
+  ...encodes.map((e) => e[1]),
+  ...videos.map((v) => v[0]),
+  ...oldClips.map((v) => v[0]),
+]) {
   const p = join(OUT, name);
   if (existsSync(p)) manifest[name] = createHash('sha256').update(readFileSync(p)).digest('hex');
 }

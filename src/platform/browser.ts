@@ -1,6 +1,7 @@
 /** Browser implementation of the platform layer (used for development and testing). */
 import { blobSource } from '../audio/tags';
 import type { FileRef, Platform } from './platform';
+import { devConverter } from './dev-convert';
 
 export function fileRefFromBlob(
   file: File,
@@ -62,6 +63,8 @@ export async function filesFromDrop(dt: DataTransfer): Promise<FileRef[]> {
 
 export class BrowserPlatform implements Platform {
   readonly kind = 'browser' as const;
+  /** Only the dev server has a converter (scripts/dev-music.ts runs FFmpeg); a plain browser has none. */
+  readonly converter = import.meta.env.DEV ? devConverter : undefined;
 
   async pickFiles(opts: { accept: string[]; multiple: boolean }): Promise<FileRef[]> {
     const files = await pick(opts.accept.map((e) => `.${e}`).join(','), opts.multiple, false);

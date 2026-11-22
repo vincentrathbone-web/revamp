@@ -2,7 +2,7 @@
 import { App } from './app/app';
 import { installCrashHandler, logger } from './core/log';
 import { BrowserPlatform } from './platform/browser';
-import type { Platform } from './platform/platform';
+import { formats, type Platform } from './platform/platform';
 import { createImage, type RgbaImage } from './skin/image';
 import type { TextRenderer } from './ui/playlist-window';
 
@@ -38,6 +38,7 @@ async function start(): Promise<void> {
   const desktop = await import('./platform/tauri');
   const native = desktop.isTauri();
   const platform: Platform = native ? new desktop.TauriPlatform() : new BrowserPlatform();
+  formats.convert = !!platform.converter;
   installCrashHandler((t) => platform.writeCrashReport(t));
   const ctx = new AudioContext({ latencyHint: 'playback' });
   const app = new App(platform, ctx, document.getElementById('desktop')!, canvasTextRenderer());

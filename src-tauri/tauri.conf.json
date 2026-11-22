@@ -26,7 +26,10 @@
     ],
     "security": {
       "csp": null,
-      "assetProtocol": { "enable": true, "scope": ["**"] }
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
     }
   },
   "bundle": {
@@ -36,6 +39,9 @@
     "license": "MIT",
     "licenseFile": "../LICENSE",
     "shortDescription": "A skinnable music player",
-    "category": "Music"
+    "category": "Music",
+    "resources": {
+      "ffmpeg/*": "ffmpeg/"
+    }
   }
 }

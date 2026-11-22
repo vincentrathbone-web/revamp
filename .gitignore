@@ -12,3 +12,4 @@ __screenshots__/
 .vitest/
 dist/
 test-assets/skin-button-report*.json
+src-tauri/ffmpeg/

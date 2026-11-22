@@ -1,6 +1,14 @@
 /** RevAmp application: connects the audio engine, playlist, skin, windows, menus and settings. */
 import { AudioEngine, type EngineTrack, type PlayState } from '../audio/engine';
-import { readTrackInfo } from '../audio/tags';
+import { readTrackInfo, type TrackInfo } from '../audio/tags';
+import {
+  CONVERT_EXTENSIONS,
+  canCopyVideo,
+  mayConvert,
+  needsConversion,
+  probeTrackInfo,
+  type ConvertSource,
+} from '../audio/convert';
 import { loadSettings, saveSettings, type Settings } from '../config/settings';
 import { logger } from '../core/log';
 import { BUILTIN_PRESETS, clampDb, type EqState, type Preset } from '../dsp/eq';
@@ -20,7 +28,7 @@ import {
   isPlaylist,
   isSkin,
   playsAsVideo,
-  MEDIA_EXTENSIONS,
+  mediaExtensions,
   PLAYLIST_EXTENSIONS,
   type FileRef,
   type Platform,
@@ -214,6 +222,7 @@ export class App implements UiContext {
       info: e.info,
       stream: isStream(e.location),
       video: playsAsVideo(e.location, e.info?.hasVideo),
+      convert: this.platform.converter && mayConvert(e.location) ? () => this.convertSource(e) : undefined,
       load: async () => {
         const f = await this.fileFor(e);
         if (!f) throw new Error(`Cannot open ${e.location}`);
@@ -224,6 +233,31 @@ export class App implements UiContext {
         return f ? f.mediaUrl() : e.location;
       },
     };
+  }
+
+  /** Asks the converter about a file the web view may not play; null = it plays as it is. */
+  private async convertSource(e: Entry): Promise<ConvertSource | null> {
+    const c = this.platform.converter!;
+    const where = (await this.fileFor(e).catch(() => null))?.location ?? e.location;
+    const always = CONVERT_EXTENSIONS.includes(extOf(where));
+    let p;
+    try {
+      p = await c.probe(where);
+    } catch (err) {
+      if (always) throw err;
+      log.debug('probe failed, playing as it is', where, err);
+      return null;
+    }
+    this.setInfo(e, { ...probeTrackInfo(p), ...e.info, hasVideo: !!p.video });
+    if (!needsConversion(where, p)) return null;
+    const opts = { copyVideo: canCopyVideo(p), hasVideo: !!p.video };
+    return { durationSec: p.durationSec, hasVideo: !!p.video, open: (t) => c.open(where, t, opts) };
+  }
+
+  private setInfo(e: Entry, info: TrackInfo): void {
+    e.info = info;
+    if (info.durationSec) e.durationSec = info.durationSec;
+    this.playlist.changed();
   }
 
   private async fileFor(e: Entry): Promise<FileRef | null> {
@@ -605,7 +639,7 @@ export class App implements UiContext {
   // ------------------------------------------------------------------ files
   async openFiles(replace: boolean): Promise<void> {
     const files = await this.platform.pickFiles({
-      accept: [...MEDIA_EXTENSIONS, ...PLAYLIST_EXTENSIONS],
+      accept: [...mediaExtensions(), ...PLAYLIST_EXTENSIONS],
       multiple: true,
     });
     if (files.length) await this.addFiles(files, replace, replace);
@@ -682,7 +716,11 @@ export class App implements UiContext {
           const f = await this.fileFor(e).catch(() => null);
           if (!f) return;
           try {
-            e.info = await readTrackInfo(f.source());
+            const c = this.platform.converter;
+            e.info =
+              c && CONVERT_EXTENSIONS.includes(extOf(f.location))
+                ? probeTrackInfo(await c.probe(f.location))
+                : await readTrackInfo(f.source());
             if (e.info.durationSec) e.durationSec = e.info.durationSec;
           } catch (err) {
             log.debug('scan failed', e.location, err);

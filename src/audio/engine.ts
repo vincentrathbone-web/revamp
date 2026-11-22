@@ -11,6 +11,8 @@ import { defaultFades, fadeCurve, type FadeSettings, type FadeShape } from './fa
 import { defaultReplayGain, replayGainFactor, type ReplayGainSettings } from './replaygain';
 import { findTrim } from './silence';
 import type { TrackInfo } from './tags';
+import type { ConvertSource } from './convert';
+import { MseFeed } from './mse';
 
 const log = logger('engine');
 
@@ -25,6 +27,11 @@ export interface EngineTrack {
   stream?: boolean;
   /** Has a picture: played through a <video> element (its sound still goes through the EQ chain). */
   video?: boolean;
+  /**
+   * Files the web view may not play (see convert.ts): resolves to a converter stream, or null when the file
+   * plays as it is after all. Such tracks always use a media element.
+   */
+  convert?(): Promise<ConvertSource | null>;
   info?: TrackInfo;
 }
 
@@ -185,9 +192,11 @@ class MediaVoice extends Voice {
   readonly kind = 'media';
   readonly el: HTMLMediaElement;
   private node: MediaElementAudioSourceNode;
-  constructor(ctx: AudioContext, track: EngineTrack, dest: AudioNode, url: string) {
+  /** Set when the file streams through the converter. */
+  readonly feed: MseFeed | null = null;
+  constructor(ctx: AudioContext, track: EngineTrack, dest: AudioNode, url: string, source?: ConvertSource) {
     super(ctx, track, dest);
-    if (track.video) {
+    if (source ? source.hasVideo : track.video) {
       const v = document.createElement('video');
       v.playsInline = true;
       v.disablePictureInPicture = true;
@@ -195,7 +204,10 @@ class MediaVoice extends Voice {
     } else this.el = new Audio();
     this.el.crossOrigin = 'anonymous';
     this.el.preload = 'auto';
-    this.el.src = url;
+    if (source) {
+      this.feed = new MseFeed(this.el, source);
+      this.el.src = this.feed.url;
+    } else this.el.src = url;
     this.node = ctx.createMediaElementSource(this.el);
     this.node.connect(this.gain);
   }
@@ -206,6 +218,7 @@ class MediaVoice extends Voice {
     return this.el.currentTime;
   }
   override dispose(): void {
+    this.feed?.dispose();
     this.el.pause();
     this.el.removeAttribute('src');
     this.el.load();
@@ -292,14 +305,17 @@ export class AudioEngine extends Emitter<EngineEvents> {
 
   // ---------------------------------------------------------------- loading
   private wantsMedia(t: EngineTrack): boolean {
-    if (t.stream || t.video) return true;
+    if (t.stream || t.video || t.convert) return true;
     const d = t.info?.durationSec;
     return !!(t.mediaUrl && this.live && d && d > this.settings.maxDecodeMinutes * 60);
   }
 
   private async makeVoice(t: EngineTrack): Promise<Voice> {
     if (this.wantsMedia(t)) {
-      if (!this.live || !t.mediaUrl) throw new Error('Streams need a live audio context and a media URL');
+      if (!this.live) throw new Error('Streams need a live audio context');
+      const source = t.convert ? await t.convert() : null;
+      if (source) return new MediaVoice(this.ctx as AudioContext, t, this.chain.input, '', source);
+      if (!t.mediaUrl) throw new Error('Streams need a media URL');
       return new MediaVoice(this.ctx as AudioContext, t, this.chain.input, await t.mediaUrl());
     }
     const bytes = await t.load();
@@ -438,6 +454,8 @@ export class AudioEngine extends Emitter<EngineEvents> {
       el.currentTime = offset;
       el.onended = () => this.onMediaEnded(voice);
       el.onerror = () => this.emit('error', { track: t, error: el.error });
+      const feed = (voice as MediaVoice).feed;
+      if (feed) feed.onerror = (error) => this.emit('error', { track: t, error });
       await el.play().catch((error) => this.emit('error', { track: t, error }));
     }
     this.setState('playing');

@@ -21,6 +21,7 @@ import type { App } from '../app/app';
 import { logger } from '../core/log';
 import { urlFileRef } from './browser';
 import type { FileRef, Platform } from './platform';
+import { parseProbe, type ByteReader, type Converter } from '../audio/convert';
 
 const log = logger('tauri');
 
@@ -29,8 +30,37 @@ export const isTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS
 const isUrl = (s: string) => /^https?:\/\//i.test(s);
 const isPath = (s: string) => /^[a-z]:[\\/]/i.test(s) || s.startsWith('\\\\') || s.startsWith('/');
 
+/** The bundled FFmpeg, run by the Rust side (src-tauri/src/convert.rs). */
+const tauriConverter: Converter = {
+  probe: async (location) => parseProbe(await invoke<string>('media_probe', { path: location })),
+  async open(location, startSec, opts): Promise<ByteReader> {
+    const { id, start } = await invoke<{ id: number; start: number }>('convert_open', {
+      path: location,
+      start: startSec,
+      copyVideo: opts.copyVideo,
+      hasVideo: opts.hasVideo,
+    });
+    let closed = false;
+    return {
+      start,
+      async read() {
+        if (closed) return null;
+        const buf = await invoke<ArrayBuffer>('convert_read', { id });
+        if (!buf.byteLength) return null;
+        return new Uint8Array(buf);
+      },
+      close() {
+        if (closed) return;
+        closed = true;
+        void invoke('convert_close', { id }).catch(() => {});
+      },
+    };
+  },
+};
+
 export class TauriPlatform implements Platform {
   readonly kind = 'tauri' as const;
+  readonly converter = tauriConverter;
   private win = getCurrentWindow();
 
   async pickFiles(opts: { accept: string[]; multiple: boolean }): Promise<FileRef[]> {
@@ -260,6 +290,17 @@ async function selfTest(app: App, platform: TauriPlatform): Promise<void> {
       const buf = new Float32Array(a.fftSize);
       a.getFloatTimeDomainData(buf);
       report.peak = buf.reduce((m, v) => Math.max(m, Math.abs(v)), 0);
+      const v = app.engine.videoElement;
+      if (v) report.video = { width: v.videoWidth, height: v.videoHeight };
+      report.converted = (app.engine as unknown as { current?: { feed?: { mime: string } } }).current?.feed
+        ?.mime;
+      if (app.engine.duration > 20) {
+        // a jump far ahead: the converter starts again there
+        const to = Math.round(app.engine.duration * 0.66);
+        app.engine.seek(to);
+        await new Promise((r) => setTimeout(r, 2500));
+        report.seek = { to, position: app.engine.position, state: app.engine.state };
+      }
       app.stop();
       app.setVolume(vol);
     }

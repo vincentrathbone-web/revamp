@@ -5,9 +5,14 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tauri::Manager;
 
+mod convert;
+
 const EXTENSIONS: &[&str] = &[
     "mp3", "mp2", "mp1", "flac", "ogg", "oga", "opus", "m4a", "mp4", "aac", "wav", "webm", "aif", "aiff", "m4v",
-    "mkv", "mov", "ogv", "m3u", "m3u8", "pls", "xspf", "b4s",
+    "mkv", "mov", "ogv",
+    // played through the bundled FFmpeg (src/convert.rs)
+    "avi", "wmv", "asf", "flv", "f4v", "mpg", "mpeg", "m1v", "m2v", "vob", "ts", "m2ts", "mts", "3gp", "3g2", "divx",
+    "rm", "rmvb", "ogm", "dv", "wtv", "wma", "ac3", "ape", "mka", "wv", "amr", "m3u", "m3u8", "pls", "xspf", "b4s",
 ];
 
 fn wanted(p: &Path) -> bool {
@@ -75,7 +80,22 @@ fn self_test() -> Option<(String, String)> {
 fn main() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
-        .invoke_handler(tauri::generate_handler![expand_paths, write_file, crash_report, self_test])
-        .run(tauri::generate_context!())
-        .expect("error while running RevAmp");
+        .manage(convert::Converters::default())
+        .invoke_handler(tauri::generate_handler![
+            expand_paths,
+            write_file,
+            crash_report,
+            self_test,
+            convert::media_probe,
+            convert::convert_open,
+            convert::convert_read,
+            convert::convert_close
+        ])
+        .build(tauri::generate_context!())
+        .expect("error while running RevAmp")
+        .run(|app, event| {
+            if let tauri::RunEvent::Exit = event {
+                app.state::<convert::Converters>().close_all();
+            }
+        });
 }
