@@ -70,6 +70,11 @@ pub const VIDEO: &[&str] = &[
 ];
 pub const PLAYLISTS: &[&str] = &["m3u", "m3u8", "pls", "xspf", "b4s"];
 
+/// The name RevAmp is listed under in RegisteredApplications.
+pub const REGISTERED_NAME: &str = "RevAmp";
+/// Windows' Default apps page with RevAmp selected (the query names the RegisteredApplications entry).
+pub const DEFAULT_APPS_LINK: &str = "ms-settings:defaultapps?registeredAppUser=RevAmp";
+
 const PROG_AUDIO: &str = "RevAmp.Audio";
 const PROG_VIDEO: &str = "RevAmp.Video";
 const PROG_PLAYLIST: &str = "RevAmp.Playlist";
@@ -298,6 +303,8 @@ mod tests {
         assert_eq!(find(&all, "Classes\\RevAmp.Audio\\shell", ""), Some("play"));
         assert_eq!(find(&all, "Capabilities\\FileAssociations", ".mkv"), Some("RevAmp.Video"));
         assert_eq!(find(&all, "RegisteredApplications", "RevAmp"), Some("Software\\RevAmp\\Capabilities"));
+        // the Default apps link must name that same entry
+        assert!(DEFAULT_APPS_LINK.ends_with(&format!("registeredAppUser={REGISTERED_NAME}")));
         // TypeScript files are not touched
         assert!(!all.iter().any(|(k, n, _)| k.contains("\\.ts\\") || k.ends_with("\\.ts") || n == ".ts"));
         // every key is below the base

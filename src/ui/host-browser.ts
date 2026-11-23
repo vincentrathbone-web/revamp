@@ -63,6 +63,12 @@ export class BrowserHost {
     return { x: 0, y: 0, w: this.root.clientWidth || innerWidth, h: this.root.clientHeight || innerHeight };
   }
 
+  /**
+   * True until the desktop app has fitted the page to the monitors. Until then the page is only the window's
+   * start size (800x600), and keeping windows "on screen" would pull saved positions into that corner.
+   */
+  holdLayout = false;
+
   /** The monitors' work areas in page coordinates (desktop app). Unset = the page is one screen. */
   monitors: Rect[] | null = null;
 
@@ -95,6 +101,8 @@ export class BrowserHost {
       sizeChanged: () => this.sizeChanged(win.id),
       setCursor: (name) => (canvas.style.cursor = this.opts.cursorUrl(name) ?? ''),
       setTooltip: (t) => (canvas.title = t ?? ''),
+      position: () => this.position(win.id),
+      moveTo: (x, y) => this.setPosition(win.id, x, y),
       get focused() {
         return false;
       },
@@ -377,6 +385,7 @@ export class BrowserHost {
   }
 
   keepAllOnScreen(): void {
+    if (this.holdLayout) return;
     if (this.screen.w < 40 || this.screen.h < 40) return;
     for (const [id, h] of this.wins) {
       const r = keepOnScreens({ x: h.x, y: h.y, ...this.sizeOf(h) }, this.screens);
@@ -403,9 +412,12 @@ export class BrowserHost {
     return [...this.wins.values()].map((h) => h.win);
   }
 
-  /** True while a window is being dragged. */
+  /** True while a window is being dragged or resized (the desktop app then keeps taking the mouse, even
+   * when the pointer runs ahead of the window's edge). */
   get dragging(): boolean {
-    return this.moving !== null;
+    return (
+      this.moving !== null || [...this.wins.values()].some((h) => (h.win as { resizing?: boolean }).resizing)
+    );
   }
 
   /** True if page point (x, y) is on a visible, non-transparent part of a window (topmost first). */

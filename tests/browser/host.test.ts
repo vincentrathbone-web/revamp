@@ -147,3 +147,20 @@ test('an overlay follows its window, scales with it, and goes fullscreen and bac
   host.setOverlay('video', null);
   expect(el.isConnected).toBe(false);
 });
+
+test('saved positions are kept until the desktop app knows the monitors', () => {
+  const { host } = setup();
+  // a docked stack saved further down a big screen than this page reaches
+  host.holdLayout = true;
+  host.setPosition('main', 40, 2000);
+  host.setPosition('eq', 40, 2116);
+  host.keepAllOnScreen();
+  expect(host.position('main')).toEqual({ x: 40, y: 2000 });
+  expect(host.position('eq')).toEqual({ x: 40, y: 2116 });
+  // the monitors arrive (one tall screen): nothing needs to move
+  host.monitors = [{ x: 0, y: 0, w: 1920, h: 3000 }];
+  host.holdLayout = false;
+  host.keepAllOnScreen();
+  expect(host.position('main')).toEqual({ x: 40, y: 2000 });
+  expect(host.position('eq')).toEqual({ x: 40, y: 2116 });
+});

@@ -4,9 +4,34 @@ export interface DialogOptions {
   body: HTMLElement | string;
   buttons?: { label: string; primary?: boolean; action?: () => boolean | void }[];
   width?: number;
+  /** Close when the user clicks somewhere else (in RevAmp or in another program). */
+  closeOnOutside?: boolean;
 }
 
-export function dialog(opts: DialogOptions): { close: () => void; el: HTMLElement } {
+export interface DialogHandle {
+  close: () => void;
+  el: HTMLElement;
+  /** Keeps a click-away dialog open for a moment (e.g. while RevAmp opens a Windows page on purpose). */
+  hold: (ms: number) => void;
+}
+
+type Area = { x: number; y: number; w: number; h: number };
+/** Where dialogs appear (page pixels): the screen the player is on. Unset = the middle of the page. */
+let dialogArea: (() => Area | null) | null = null;
+export function setDialogArea(fn: () => Area | null): void {
+  dialogArea = fn;
+}
+
+/** Is page point (x, y) on an open dialog? (The desktop app lets clicks anywhere else through.) */
+export function overDialog(x: number, y: number): boolean {
+  for (const box of document.querySelectorAll('.rv-dialog')) {
+    const r = box.getBoundingClientRect();
+    if (x >= r.left && y >= r.top && x < r.right && y < r.bottom) return true;
+  }
+  return false;
+}
+
+export function dialog(opts: DialogOptions): DialogHandle {
   const layer = document.createElement('div');
   layer.className = 'rv-dialog-layer';
   const box = document.createElement('div');
@@ -28,7 +53,28 @@ export function dialog(opts: DialogOptions): { close: () => void; el: HTMLElemen
   else body.appendChild(opts.body);
   const foot = document.createElement('div');
   foot.className = 'rv-dialog-buttons';
-  const close = () => layer.remove();
+  let holdUntil = 0;
+  const close = () => {
+    layer.remove();
+    removeEventListener('pointerdown', outside, true);
+    removeEventListener('blur', blurred);
+  };
+  // click-away: a press outside the box, or RevAmp losing focus to another program
+  const outside = (e: PointerEvent) => {
+    if (!box.contains(e.target as Node) && !(e.target as Element | null)?.closest?.('.rv-menu-layer'))
+      close();
+  };
+  const blurred = () => {
+    if (performance.now() >= holdUntil) close();
+  };
+  if (opts.closeOnOutside) {
+    // added after this click is over, so the click that opened the dialog doesn't close it
+    setTimeout(() => {
+      if (!layer.isConnected) return;
+      addEventListener('pointerdown', outside, true);
+      addEventListener('blur', blurred);
+    }, 0);
+  }
   for (const b of opts.buttons ?? [{ label: 'Close', primary: true }]) {
     const btn = document.createElement('button');
     btn.textContent = b.label;
@@ -49,6 +95,15 @@ export function dialog(opts: DialogOptions): { close: () => void; el: HTMLElemen
   box.append(head, body, foot);
   layer.appendChild(box);
   document.body.appendChild(layer);
+  // on the player's screen, not in the middle of all monitors together
+  const area = dialogArea?.();
+  if (area) {
+    const r = box.getBoundingClientRect();
+    box.style.position = 'fixed';
+    box.style.left = `${Math.round(area.x + Math.max(16, (area.w - r.width) / 2))}px`;
+    box.style.top = `${Math.round(area.y + Math.max(16, (area.h - r.height) / 2))}px`;
+    box.style.maxHeight = `${Math.max(200, area.h - 32)}px`;
+  }
   // drag by the title
   head.addEventListener('pointerdown', (e) => {
     const r = box.getBoundingClientRect();
@@ -71,7 +126,7 @@ export function dialog(opts: DialogOptions): { close: () => void; el: HTMLElemen
       )?.focus(),
     0,
   );
-  return { close, el: body };
+  return { close, el: body, hold: (ms) => (holdUntil = performance.now() + ms) };
 }
 
 export function prompt(title: string, label: string, initial = ''): Promise<string | null> {

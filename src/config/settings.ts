@@ -54,6 +54,8 @@ export interface Settings {
   userPresets: Preset[];
   repeat: 'off' | 'all' | 'one';
   shuffle: boolean;
+  /** Stop after each song instead of going on (Shift+R). */
+  manualAdvance: boolean;
   /** Playlist locations remembered between runs (paths/URLs; browser files can't be reopened). */
   playlist: { location: string; title?: string; durationSec?: number }[];
   playlistIndex: number;
@@ -99,6 +101,7 @@ export function defaultSettings(): Settings {
     userPresets: [],
     repeat: 'off',
     shuffle: false,
+    manualAdvance: false,
     playlist: [],
     playlistIndex: -1,
     resumePosition: 0,

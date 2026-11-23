@@ -1,6 +1,6 @@
 [package]
 name = "revamp"
-version = "0.1.0"
+version = "0.2.0"
 description = "RevAmp - a skinnable music player"
 license = "MIT"
 edition = "2021"

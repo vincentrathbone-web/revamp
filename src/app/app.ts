@@ -38,7 +38,7 @@ import { BUILTIN_SKINS, builtinLocation, builtinSkin, isBuiltinLocation } from '
 import { defaultSkin } from '../skin/default-skin';
 import { skinFromArchive, type Skin } from '../skin/skin';
 import type { MenuKind, UiContext, UiState, VideoCommand, VisualCommand } from '../ui/context';
-import { dialog, factTable, prompt } from '../ui/dialogs';
+import { dialog, factTable, prompt, setDialogArea } from '../ui/dialogs';
 import { EqWindow } from '../ui/eq-window';
 import { BrowserHost } from '../ui/host-browser';
 import { MainWindow } from '../ui/main-window';
@@ -51,9 +51,10 @@ import { Visualizer } from '../ui/vis';
 import type { ShadeId, WindowId } from '../ui/window';
 import { VIDEO_MIN_H, VIDEO_MIN_W, videoArea } from '../skin/sprites';
 import { openPreferences } from './preferences';
+import { chordOf, findShortcut, type KeyActions } from './keys';
 
 const log = logger('app');
-export const VERSION = '0.1.0';
+export const VERSION = '0.2.0';
 
 const isStream = (loc: string) =>
   /^https?:\/\//i.test(loc) && !/\.(mp3|ogg|flac|m4a|wav|opus|aac)(\?|$)/i.test(loc);
@@ -109,6 +110,7 @@ export class App implements UiContext {
       if ('mediaSession' in navigator) navigator.mediaSession.playbackState = st === 'stopped' ? 'none' : st;
     });
     this.setupMediaKeys();
+    this.engine.on('ended', () => (this.stopAfterCurrent = false));
     this.engine.on('info', (i) => {
       this.trackMeta.khz = i.sampleRate / 1000;
       this.trackMeta.channels = i.channels;
@@ -154,7 +156,15 @@ export class App implements UiContext {
     this.host.setOverlay('visual', this.visual.element, () => this.visualWin.pictureRect);
     if (s.ui.visual.visible) void this.visual.start();
     this.host.focus('main');
+    // desktop app: the page is resized to the monitors after start; positions are checked then
+    this.host.holdLayout = platform.kind === 'tauri';
     this.host.keepAllOnScreen();
+    setDialogArea(() => {
+      const m = this.host.position('main');
+      return (
+        this.host.screens.find((r) => m.x >= r.x && m.y >= r.y && m.x < r.x + r.w && m.y < r.y + r.h) ?? null
+      );
+    });
     this.playlist.onChange(() => {
       this.plWin.invalidate();
       this.main.invalidate();
@@ -292,6 +302,7 @@ export class App implements UiContext {
   }
 
   private nextTrackAfter(t: EngineTrack): EngineTrack | null {
+    if (this.stopAfterCurrent || this.settings.manualAdvance) return null;
     const idx = this.playlist.entries.findIndex((e) => String(e.id) === t.key);
     if (idx < 0) return null;
     const n = this.playlist.peekNext(idx);
@@ -636,6 +647,7 @@ export class App implements UiContext {
     el.classList.toggle('stretch', this.settings.ui.videoStretch);
     this.host.setOverlay('video', el, () => this.videoWin.pictureRect);
     if (this.settings.ui.videoAutoShow && !this.host.isVisible('video')) this.setWindowVisible('video', true);
+    if (!this.host.fullscreen) this.flash('F OR CTRL+F: FULLSCREEN');
   }
 
   private videoMenu(): MenuItem[] {
@@ -643,7 +655,7 @@ export class App implements UiContext {
     return [
       {
         label: 'Fullscreen',
-        shortcut: 'Alt+Enter',
+        shortcut: 'F',
         checked: this.host.fullscreen,
         disabled: !has,
         action: () => this.videoCommand('fullscreen'),
@@ -759,7 +771,7 @@ export class App implements UiContext {
     return [
       {
         label: 'Fullscreen',
-        shortcut: 'Alt+Enter',
+        shortcut: 'F',
         checked: this.fullscreenOf === 'visual',
         action: () => this.visualCommand('fullscreen'),
       },
@@ -996,15 +1008,29 @@ export class App implements UiContext {
   }
 
   private cursorFor(name: string | undefined): string | undefined {
-    if (!name || !this.settings.ui.skinCursors) return undefined;
-    const data = this.skin.cursors[name];
-    if (!data) return undefined;
+    if (!name) return undefined;
+    // standard pointers for resize spots, used when the skin has no cursor of its own
+    const plain = (
+      {
+        psize: 'nwse-resize',
+        'size-se': 'nwse-resize',
+        'size-nw': 'nwse-resize',
+        'size-ne': 'nesw-resize',
+        'size-sw': 'nesw-resize',
+        'size-e': 'ew-resize',
+        'size-w': 'ew-resize',
+        'size-n': 'ns-resize',
+        'size-s': 'ns-resize',
+      } as Record<string, string>
+    )[name];
+    const data = this.settings.ui.skinCursors ? this.skin.cursors[name] : undefined;
+    if (!data) return plain;
     let url = this.cursorUrls.get(name);
     if (!url) {
       url = URL.createObjectURL(new Blob([data as BlobPart], { type: 'image/x-icon' }));
       this.cursorUrls.set(name, url);
     }
-    return `url("${url}"), auto`;
+    return `url("${url}"), ${plain ?? 'auto'}`;
   }
 
   // ------------------------------------------------------------------ EQ presets
@@ -1127,6 +1153,7 @@ export class App implements UiContext {
     dialog({
       title: 'File info',
       width: 420,
+      closeOnOutside: true,
       body: factTable([
         ['Location', e.location],
         ['Title', i.title],
@@ -1193,12 +1220,16 @@ export class App implements UiContext {
     });
   }
 
+  openPreferences(): void {
+    openPreferences(this);
+  }
+
   about(): void {
     const body = document.createElement('div');
     body.innerHTML = `<p><b>RevAmp ${VERSION}</b></p><p>A classic skinnable music player, rebuilt from scratch.</p>
       <p>Loads classic <code>.wsz</code> skins. Default skin "Graphite" is original RevAmp art.</p>
       <p>MIT License. Third-party components: fflate (MIT).</p>`;
-    dialog({ title: 'About RevAmp', body, width: 380 });
+    dialog({ title: 'About RevAmp', body, width: 380, closeOnOutside: true });
   }
 
   // ------------------------------------------------------------------ menus
@@ -1374,14 +1405,14 @@ export class App implements UiContext {
           { label: 'Playback', submenu: () => this.playbackMenu() },
           { label: 'Visualization', submenu: () => this.visMenu() },
           'sep',
-          { label: 'Preferences…', shortcut: 'Ctrl+P', action: () => openPreferences(this) },
+          { label: 'Preferences…', shortcut: 'Ctrl+P', action: () => this.openPreferences() },
           { label: 'About RevAmp…', action: () => this.about() },
           'sep',
           { label: this.platform.quit ? 'Exit' : 'Close player', action: () => this.closeWindow('main') },
         ];
       case 'options':
         return [
-          { label: 'Preferences…', shortcut: 'Ctrl+P', action: () => openPreferences(this) },
+          { label: 'Preferences…', shortcut: 'Ctrl+P', action: () => this.openPreferences() },
           { label: 'Skins', submenu: () => this.skinsMenu() },
           'sep',
           {
@@ -1570,65 +1601,195 @@ export class App implements UiContext {
   }
 
   // ------------------------------------------------------------------ keyboard
-  private onKey(e: KeyboardEvent): void {
-    if (
-      e.target instanceof HTMLInputElement ||
-      e.target instanceof HTMLTextAreaElement ||
-      e.target instanceof HTMLSelectElement
-    )
-      return;
-    if (document.querySelector('.rv-dialog-layer')) return;
-    if (this.host.focused === 'pl' && this.plWin.key(e))
-      return void (this.plWin.invalidate(), e.preventDefault());
-    const k = e.key.toLowerCase();
-    const ctrl = e.ctrlKey || e.metaKey;
-    const map: Record<string, () => void> = {
-      z: () => this.prev(),
-      x: () => this.play(),
-      c: () => this.pause(),
-      v: () => this.stop(),
-      b: () => this.next(),
-      j: () => this.jumpToFile(),
-      r: () => this.toggleRepeat(),
-      s: () => this.toggleShuffle(),
-      arrowleft: () => this.seekBy(-5),
-      arrowright: () => this.seekBy(5),
-      arrowup: () => (
-        this.setVolume(this.settings.audio.chain.volume + 0.02),
-        this.flash(`VOLUME: ${Math.round(this.settings.audio.chain.volume * 100)}%`)
-      ),
-      arrowdown: () => (
-        this.setVolume(this.settings.audio.chain.volume - 0.02),
-        this.flash(`VOLUME: ${Math.round(this.settings.audio.chain.volume * 100)}%`)
-      ),
+  /** Stop when the current track ends (Ctrl+V), once. */
+  stopAfterCurrent = false;
+
+  /** First (Ctrl+Z) or last (Ctrl+B) track of the list; plays it if something was playing. */
+  private goToTrack(i: number): void {
+    if (i < 0 || i >= this.playlist.length) return;
+    if (this.engine.state === 'stopped') this.playlist.setCurrent(i);
+    else this.playIndex(i);
+  }
+
+  /** Moves 10 tracks down or up the list (number pad 3 / 1), stopping at the ends. */
+  private jumpTracks(n: number): void {
+    if (!this.playlist.length) return;
+    this.goToTrack(Math.max(0, Math.min(this.playlist.length - 1, Math.max(0, this.playlist.current) + n)));
+  }
+
+  private async jumpToTime(): Promise<void> {
+    if (!this.engine.currentTrack) return this.flash('NOTHING PLAYING');
+    const text = await prompt(
+      'Jump to time',
+      'Time (minutes:seconds, or seconds):',
+      formatTime(this.engine.position),
+    );
+    if (!text) return;
+    const parts = text.trim().split(':').map(Number);
+    if (parts.some((p) => !Number.isFinite(p))) return this.flash('NOT A TIME');
+    const sec = parts.reduce((t, p) => t * 60 + p, 0);
+    this.seek(Math.max(0, Math.min(this.engine.duration - 0.5, sec)));
+  }
+
+  private focusNextWindow(): void {
+    const order = (['main', 'eq', 'pl', 'video', 'visual'] as const).filter((id) => this.host.isVisible(id));
+    if (!order.length) return;
+    const i = order.indexOf(this.host.focused as (typeof order)[number]);
+    this.host.focus(order[(i + 1) % order.length]!);
+    this.invalidateAll();
+  }
+
+  private menuAtWindow(kind: MenuKind, id: WindowId): void {
+    const p = this.host.position(id);
+    this.showMenu(kind, p.x + 20, p.y + 20);
+  }
+
+  private keyActions(): KeyActions {
+    const eq = () => this.settings.audio.chain.eq;
+    return {
+      prev: () => this.prev(),
+      play: () => this.play(),
+      pause: () => this.pause(),
+      stop: () => this.stop(),
+      next: () => this.next(),
+      firstTrack: () => this.goToTrack(0),
+      lastTrack: () => this.goToTrack(this.playlist.length - 1),
+      jumpTracks: (n) => this.jumpTracks(n),
+      stopWithFade: () => void this.engine.stop(2000),
+      toggleStopAfterCurrent: () => {
+        this.stopAfterCurrent = !this.stopAfterCurrent;
+        this.engine.invalidateNext();
+        this.flash(this.stopAfterCurrent ? 'STOP AFTER THIS TRACK' : 'KEEP PLAYING');
+      },
+      toggleManualAdvance: () => {
+        this.settings.manualAdvance = !this.settings.manualAdvance;
+        this.engine.invalidateNext();
+        this.flash(this.settings.manualAdvance ? 'MANUAL ADVANCE: ON' : 'MANUAL ADVANCE: OFF');
+        this.scheduleSave();
+      },
+      seekBy: (s) => this.seekBy(s),
+      volumeBy: (d) => {
+        this.setVolume(this.settings.audio.chain.volume + d);
+        this.flash(`VOLUME: ${Math.round(this.settings.audio.chain.volume * 100)}%`);
+      },
+      balanceBy: (d) => {
+        this.setBalance(Math.round((this.settings.audio.chain.balance + d) * 100) / 100);
+        const b = Math.round(this.settings.audio.chain.balance * 100);
+        this.flash(b === 0 ? 'BALANCE: CENTRE' : `BALANCE: ${Math.abs(b)}% ${b < 0 ? 'LEFT' : 'RIGHT'}`);
+      },
+      openFiles: (replace) => void this.openFiles(replace),
+      openFolder: (replace) => void this.openFolder(replace),
+      openUrl: (replace) => void (replace ? this.openUrl() : this.plMenuAction('addUrl')),
+      jumpToFile: () => this.jumpToFile(),
+      jumpToTime: () => void this.jumpToTime(),
+      toggleRepeat: () => this.toggleRepeat(),
+      toggleShuffle: () => this.toggleShuffle(),
+      fileInfo: () => {
+        const sel = this.host.focused === 'pl' ? this.playlist.entries.findIndex((e) => e.selected) : -1;
+        this.fileInfo(sel >= 0 ? sel : this.playlist.current);
+      },
+      toggleWindow: (id) => {
+        if (id !== 'main') return this.toggleWindow(id);
+        // the main window may only hide while another window stays open
+        const others = (['eq', 'pl', 'video', 'visual'] as const).some((w) => this.host.isVisible(w));
+        if (this.host.isVisible('main') && !others) return;
+        this.host.setVisible('main', !this.host.isVisible('main'));
+      },
+      toggleShade: () =>
+        this.toggleShade(
+          this.host.focused === 'eq' || this.host.focused === 'pl' ? this.host.focused : 'main',
+        ),
+      toggleDoubleSize: () => this.toggleDoubleSize(),
+      toggleTimeMode: () => this.toggleTimeMode(),
+      toggleAlwaysOnTop: () => this.toggleAlwaysOnTop(),
+      preferences: () => this.openPreferences(),
+      about: () => this.about(),
+      minimize: () => this.minimize(),
+      quit: () => this.closeWindow('main'),
+      mainMenu: () => this.menuAtWindow('main', 'main'),
+      skinsMenu: () => this.menuAtWindow('skins', 'main'),
+      visualMenu: () => this.menuAtWindow('visual', this.host.isVisible('visual') ? 'visual' : 'main'),
+      reloadSkin: () => {
+        const loc = this.settings.ui.skin;
+        if (loc) void this.restoreSkin(loc);
+        else this.setSkin(defaultSkin());
+      },
+      focusNextWindow: () => this.focusNextWindow(),
+      fullscreen: () =>
+        this.fullscreenOf === 'visual' || (!this.host.fullscreen && this.host.focused === 'visual')
+          ? this.visualCommand('fullscreen')
+          : this.videoCommand('fullscreen'),
+      exitFullscreen: () => (this.host.fullscreen ? (this.exitFullscreen(), true) : false),
+      loadPlaylist: () => void this.plMenuAction('loadList'),
+      savePlaylist: () => void this.savePlaylist('m3u8'),
+      plShowPlaying: () => {
+        if (this.playlist.current >= 0) this.plWin.ensureVisible(this.playlist.current);
+      },
+      plClear: () => void this.plMenuAction('newList'),
+      plCrop: () => this.playlist.crop(),
+      plRemoveDead: () => void this.removeMissing(),
+      plSort: (by) => {
+        const pl = this.playlist;
+        if (by === 'title') pl.sortBy(displayTitle);
+        else if (by === 'filename') pl.sortBy((e) => e.location.split(/[\\/]/).pop() ?? '');
+        else if (by === 'path') pl.sortBy((e) => e.location);
+        else if (by === 'reverse') pl.reverse();
+        else pl.randomize();
+      },
+      eqBand: (band, d) => {
+        const e = eq();
+        this.setEq({ ...e, bandsDb: e.bandsDb.map((v, i) => (i === band ? v + d : v)) });
+        this.eqWin.invalidate();
+      },
+      eqPreamp: (d) => {
+        this.setEq({ ...eq(), preampDb: eq().preampDb + d });
+        this.eqWin.invalidate();
+      },
+      eqToggle: () => (this.setEq({ ...eq(), enabled: !eq().enabled }), this.eqWin.invalidate()),
+      eqToggleAuto: () => (this.setEq({ ...eq(), auto: !eq().auto }), this.eqWin.invalidate()),
+      eqPresets: () => this.menuAtWindow('eqPresets', 'eq'),
+      visualNext: () => this.visualCommand('next'),
+      visualPrev: () => this.visualCommand('prev'),
     };
-    let fn: (() => void) | undefined;
-    const onVisual =
-      this.fullscreenOf === 'visual' || (!this.host.fullscreen && this.host.focused === 'visual');
-    if (ctrl && e.shiftKey && k === 'k') fn = () => this.toggleWindow('visual');
-    else if (onVisual && !ctrl && !e.altKey && k === ' ') fn = () => this.visualCommand('next');
-    else if (onVisual && !ctrl && !e.altKey && k === 'backspace') fn = () => this.visualCommand('prev');
-    else if (onVisual && e.altKey && k === 'enter') fn = () => this.visualCommand('fullscreen');
-    else if (ctrl && k === 'l') fn = () => void this.openUrl();
-    else if (ctrl && k === 'd') fn = () => this.toggleDoubleSize();
-    else if (ctrl && k === 't') fn = () => this.toggleTimeMode();
-    else if (ctrl && k === 'p') fn = () => openPreferences(this);
-    else if (ctrl && k === 'a' && this.host.focused !== 'pl') fn = () => this.toggleAlwaysOnTop();
-    else if (ctrl && k === 'w') fn = () => this.toggleShade('main');
-    else if (e.altKey && k === 'e') fn = () => this.toggleWindow('pl');
-    else if (e.altKey && k === 'g') fn = () => this.toggleWindow('eq');
-    else if (e.altKey && k === 'v') fn = () => this.toggleWindow('video');
-    else if (e.altKey && k === 'enter') fn = () => this.videoCommand('fullscreen');
-    else if (k === 'escape' && this.host.fullscreen) fn = () => this.exitFullscreen();
-    else if (e.altKey && k === '3') fn = () => this.fileInfo();
-    else if (k === 'l' && e.shiftKey && !ctrl) fn = () => void this.openFolder(true);
-    else if (k === 'l' && !ctrl && !e.altKey) fn = () => void this.openFiles(true);
-    else if (!ctrl && !e.altKey) fn = map[k];
-    if (fn) {
+  }
+
+  /** Removes playlist entries whose files are gone (Alt+Delete in the playlist). */
+  private async removeMissing(): Promise<void> {
+    const gone = new Set<number>();
+    await Promise.all(
+      this.playlist.entries.map(async (e) => {
+        if (isStream(e.location)) return;
+        const f = await this.platform.resolve(e.location).catch(() => null);
+        if (!f) gone.add(e.id);
+      }),
+    );
+    if (gone.size) this.playlist.removeWhere((e) => gone.has(e.id));
+    this.flash(`REMOVED ${gone.size} MISSING`);
+  }
+
+  /** Last key press and what it did (the QA run reads it). */
+  lastKey: { chord: string; where: WindowId; label: string | null } | null = null;
+
+  private onKey(e: KeyboardEvent): void {
+    const t = e.target as Element | null;
+    if (t instanceof HTMLInputElement || t instanceof HTMLTextAreaElement || t instanceof HTMLSelectElement)
+      return;
+    // keys typed in a dialog belong to it; with a dialog open elsewhere, the player still takes keys
+    if (t?.closest?.('.rv-dialog, .rv-menu-layer')) return;
+    if (['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) return;
+    if (e.key === 'Escape' && this.host.fullscreen) {
       e.preventDefault();
-      fn();
-      this.invalidateAll();
+      return this.exitFullscreen();
     }
+    const where: WindowId = this.fullscreenOf ?? this.host.focused ?? 'main';
+    if (where === 'pl' && this.plWin.key(e)) return void (this.plWin.invalidate(), e.preventDefault());
+    const chord = chordOf(e);
+    const s = findShortcut(chord, where);
+    this.lastKey = { chord, where, label: s?.label ?? null };
+    if (!s) return;
+    e.preventDefault();
+    s.run(this.keyActions());
+    this.invalidateAll();
   }
 
   // ------------------------------------------------------------------ persistence

@@ -45,9 +45,13 @@ async function worker() {
     if (have.has(name) || existsSync(join(OUT, name))) continue;
     try {
       const meta = await (await fetch(`https://archive.org/metadata/${id}`, { headers: UA })).json();
-      const f = (meta.files ?? []).find((x) => /\.(wsz|zip)$/i.test(x.name) && Number(x.size ?? 0) < 3_000_000);
+      const f = (meta.files ?? []).find(
+        (x) => /\.(wsz|zip)$/i.test(x.name) && Number(x.size ?? 0) < 3_000_000,
+      );
       if (!f) continue;
-      const r = await fetch(`https://archive.org/download/${id}/${encodeURIComponent(f.name)}`, { headers: UA });
+      const r = await fetch(`https://archive.org/download/${id}/${encodeURIComponent(f.name)}`, {
+        headers: UA,
+      });
       if (!r.ok) {
         failed++;
         continue;

@@ -20,7 +20,11 @@ export class VisualWindow extends FrameWindow {
   protected buttonDefs(): FrameButton[] {
     const ui = this.ui;
     return [
-      { id: 'mFull', tip: 'Fullscreen', run: () => ui.visualCommand('fullscreen') },
+      {
+        id: 'mFull',
+        tip: 'Fullscreen (F or Ctrl+F; Esc to leave)',
+        run: () => ui.visualCommand('fullscreen'),
+      },
       { id: 'mZoom1', tip: 'Normal size', run: () => ui.visualCommand('zoom1') },
       { id: 'mZoom2', tip: 'Double size', run: () => ui.visualCommand('zoom2') },
       { id: 'mNext', tip: 'Next preset', run: () => ui.visualCommand('next') },

@@ -238,7 +238,8 @@ export function codecsFromInit(b: Uint8Array): string[] {
       // audio sample entry: 28 bytes before its child boxes
       const esds = boxes(b, entry.body + 28, entry.end).find((x) => x.type === 'esds');
       out.push(`mp4a.40.${esds ? aacObjectType(b, esds.body + 4, esds.end) : 2}`);
-    } else out.push(entry.type);
+    } else if (!['text', 'tx3g', 'wvtt', 'stpp', 'c608'].includes(entry.type)) out.push(entry.type);
+    // (chapter/subtitle text tracks are left out: the player would refuse the whole stream for them)
   }
   return out;
 }

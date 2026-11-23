@@ -111,13 +111,42 @@ fn shell_register(options: shell::ShellOptions, force: bool) -> Result<bool, Str
 }
 
 /// Opens Windows' Default apps page for RevAmp, where the user can make it the default player.
+/// The link goes to Windows' own handler (ShellExecute), like Start > Run: explorer.exe can't open
+/// an ms-settings: link with a query and shows a folder window instead.
 #[tauri::command]
 fn open_default_apps() -> Result<(), String> {
-    std::process::Command::new("explorer.exe")
-        .arg("ms-settings:defaultapps?registeredAppUser=RevAmp")
-        .spawn()
-        .map(|_| ())
-        .map_err(|e| e.to_string())
+    #[cfg(windows)]
+    {
+        #[link(name = "shell32")]
+        extern "system" {
+            fn ShellExecuteW(
+                hwnd: *mut core::ffi::c_void,
+                op: *const u16,
+                file: *const u16,
+                params: *const u16,
+                dir: *const u16,
+                show: i32,
+            ) -> isize;
+        }
+        let wide = |s: &str| s.encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+        let op = wide("open");
+        let link = wide(shell::DEFAULT_APPS_LINK);
+        const SW_SHOWNORMAL: i32 = 1;
+        // returns a value above 32 on success
+        let r = unsafe {
+            ShellExecuteW(
+                core::ptr::null_mut(),
+                op.as_ptr(),
+                link.as_ptr(),
+                core::ptr::null(),
+                core::ptr::null(),
+                SW_SHOWNORMAL,
+            )
+        };
+        if r > 32 { Ok(()) } else { Err(format!("Windows could not open Default apps (error {r})")) }
+    }
+    #[cfg(not(windows))]
+    Err("Only on Windows".into())
 }
 
 /// `revamp.exe --register` / `--unregister` (run by the installer and uninstaller): writes or removes the

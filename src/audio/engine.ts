@@ -85,6 +85,8 @@ abstract class Voice {
     this.gain.connect(this.rg);
     this.rg.connect(dest);
   }
+  /** Context time at which the voice's fade-in (start fade or crossfade) is done. */
+  fadeInEnd = 0;
   abstract readonly kind: 'buffer' | 'media';
   abstract get duration(): number;
   abstract position(now: number): number;
@@ -112,13 +114,16 @@ class BufferVoice extends Voice {
     track: EngineTrack,
     dest: AudioNode,
     readonly buffer: AudioBuffer,
-    trim: boolean,
+    trim: boolean | { start: number; end: number },
     thresholdDb: number,
     readonly partial = false,
   ) {
     super(ctx, track, dest);
     const sr = buffer.sampleRate;
-    if (trim) {
+    if (typeof trim === 'object') {
+      this.trimStart = trim.start;
+      this.trimEnd = trim.end;
+    } else if (trim) {
       const ch = Array.from({ length: buffer.numberOfChannels }, (_, i) => buffer.getChannelData(i));
       const t = findTrim(ch, sr, thresholdDb, 5);
       this.trimStart = t.end > t.start ? t.start / sr : 0;
@@ -314,9 +319,14 @@ export class AudioEngine extends Emitter<EngineEvents> {
     if (this.wantsMedia(t)) {
       if (!this.live) throw new Error('Streams need a live audio context');
       const source = t.convert ? await t.convert() : null;
-      if (source) return new MediaVoice(this.ctx as AudioContext, t, this.chain.input, '', source);
-      if (!t.mediaUrl) throw new Error('Streams need a media URL');
-      return new MediaVoice(this.ctx as AudioContext, t, this.chain.input, await t.mediaUrl());
+      const v = source
+        ? new MediaVoice(this.ctx as AudioContext, t, this.chain.input, '', source)
+        : t.mediaUrl
+          ? new MediaVoice(this.ctx as AudioContext, t, this.chain.input, await t.mediaUrl())
+          : null;
+      if (!v) throw new Error('Streams need a media URL');
+      v.rg.gain.value = replayGainFactor(t.info?.replayGain, this.settings.replayGain);
+      return v;
     }
     const bytes = await t.load();
     return this.bufferVoice(t, await this.ctx.decodeAudioData(bytes));
@@ -385,9 +395,11 @@ export class AudioEngine extends Emitter<EngineEvents> {
     } catch {
       return; // nothing to swap (already complete)
     }
+    // swapping mid fade-in would freeze the volume where the fade happened to be: wait for it to finish
+    while (gen === this.generation && this.current === part && part.fadeInEnd > this.ctx.currentTime)
+      await sleep(Math.min(250, (part.fadeInEnd - this.ctx.currentTime) * 1000 + 20));
     if (gen !== this.generation || this.current !== part) return;
     const voice = this.bufferVoice(part.track, buffer);
-    voice.gain.gain.value = part.gain.gain.value;
     const sr = this.ctx.sampleRate;
     const when = Math.round((this.ctx.currentTime + 0.05) * sr) / sr;
     const pos = this.pendingSeek !== null ? this.pendingSeek + voice.trimStart : part.position(when);
@@ -402,6 +414,7 @@ export class AudioEngine extends Emitter<EngineEvents> {
     else {
       const xf = 0.015;
       this.ramp(voice.gain.gain, when, xf, 0, 1);
+      voice.fadeInEnd = when + xf;
       this.ramp(part.gain.gain, when, xf, 1, 0);
       part.stopAt(when + xf);
     }
@@ -447,7 +460,10 @@ export class AudioEngine extends Emitter<EngineEvents> {
     const fade = this.firstStartDone ? this.settings.fades.start : this.settings.fades.firstStart;
     this.firstStartDone = true;
     const when = this.ctx.currentTime + this.lead();
-    if (fade.enabled && fade.ms > 0) this.ramp(voice.gain.gain, when, fade.ms / 1000, 0, 1);
+    if (fade.enabled && fade.ms > 0) {
+      this.ramp(voice.gain.gain, when, fade.ms / 1000, 0, 1);
+      voice.fadeInEnd = when + fade.ms / 1000;
+    }
     if (voice instanceof BufferVoice) voice.start(when, voice.trimStart + offset);
     else {
       const el = (voice as MediaVoice).el;
@@ -500,14 +516,15 @@ export class AudioEngine extends Emitter<EngineEvents> {
     this.setState('playing');
   }
 
-  stop(): Promise<void> {
-    return this.track(this.stopInner());
+  /** Stops; `fadeMs` overrides the stop fade from the settings. */
+  stop(fadeMs?: number): Promise<void> {
+    return this.track(this.stopInner(fadeMs));
   }
 
-  private async stopInner(): Promise<void> {
+  private async stopInner(fadeMs?: number): Promise<void> {
     if (!this.current) return this.setState('stopped');
     const gen = ++this.generation;
-    const f = this.settings.fades.stop;
+    const f = fadeMs === undefined ? this.settings.fades.stop : { enabled: fadeMs > 0, ms: fadeMs };
     if (this.state === 'playing' && f.enabled && f.ms > 0) {
       this.ramp(this.chain.input.gain, this.ctx.currentTime, f.ms / 1000, 1, 0);
       await sleep(f.ms);
@@ -523,11 +540,17 @@ export class AudioEngine extends Emitter<EngineEvents> {
     this.setState('stopped');
   }
 
+  /** True when the last seek was a crossfade (read by the QA run). */
+  lastSeekCrossfaded = false;
+
   /** Jumps to `sec` seconds into the current track. */
   seek(sec: number): void {
     const v = this.current;
     if (!v) return;
     const now = this.ctx.currentTime;
+    this.lastSeekCrossfaded = false;
+    const xf = this.settings.crossfadeMs / 1000;
+    if (xf > 0 && this.state === 'playing' && this.seekCrossfade(v, Math.max(0, sec), xf)) return;
     const f = this.settings.fades.seek;
     if (f.enabled && f.ms > 0 && this.state === 'playing') {
       const g = this.chain.input.gain;
@@ -549,6 +572,80 @@ export class AudioEngine extends Emitter<EngineEvents> {
         this.scheduleNext();
       }
     } else (v as MediaVoice).el.currentTime = Math.max(0, sec);
+  }
+
+  /**
+   * Plays the same song from the new spot on a second voice and crossfades to it, so a seek sounds like a
+   * crossfade between two songs. Returns false when it can't (then the plain seek runs).
+   */
+  private seekCrossfade(v: Voice, sec: number, xf: number): boolean {
+    if (v instanceof MediaVoice) {
+      // one media element can't be in two places: dip the sound around the jump instead
+      const g = this.chain.input.gain;
+      const half = Math.min(xf / 2, 0.75);
+      const now = this.ctx.currentTime;
+      this.ramp(g, now, half, g.value, 0);
+      const el = v.el;
+      setTimeout(() => {
+        if (this.current !== v) return;
+        el.currentTime = sec;
+        this.ramp(g, this.ctx.currentTime, half, 0, 1);
+      }, half * 1000);
+      this.lastSeekCrossfaded = true;
+      return true;
+    }
+    if (!(v instanceof BufferVoice)) return false;
+    const target = v.trimStart + sec;
+    if (target >= v.trimEnd - 0.05) return false;
+    if (v.partial) return false; // the full decode is about to replace this voice: plain seek
+    const nv = new BufferVoice(
+      this.ctx,
+      v.track,
+      this.chain.input,
+      v.buffer,
+      { start: v.trimStart, end: v.trimEnd },
+      0,
+      false,
+    );
+    nv.rg.gain.value = v.rg.gain.value;
+    const sr = this.ctx.sampleRate;
+    const when = Math.round((this.ctx.currentTime + this.lead()) * sr) / sr;
+    const dur = Math.max(0.01, Math.min(xf, v.trimEnd - target));
+    nv.start(when, target);
+    this.ramp(nv.gain.gain, when, dur, 0, 1);
+    nv.fadeInEnd = when + dur;
+    // the old voice fades from wherever its own fade is right now
+    const from = v.fadeInEnd > when ? Math.max(0, Math.min(1, v.gain.gain.value)) : 1;
+    this.ramp(v.gain.gain, when, dur, from, 0);
+    v.stopAt(when + dur);
+    v.fadeInEnd = 0;
+    this.current = nv;
+    setTimeout(() => v.dispose(), (dur + 0.3) * 1000);
+    if (this.next) {
+      this.next.unschedule();
+      this.scheduleNext();
+    }
+    this.lastSeekCrossfaded = true;
+    return true;
+  }
+
+  /** What each voice is doing right now (read by the QA run). */
+  debugVoices(): { role: string; kind: string; key: string; rg: number; gain: number; partial: boolean }[] {
+    const out = [];
+    for (const [role, v] of [
+      ['current', this.current],
+      ['next', this.next],
+    ] as const)
+      if (v)
+        out.push({
+          role,
+          kind: v.kind,
+          key: v.track.key,
+          rg: Math.round(v.rg.gain.value * 1000) / 1000,
+          gain: Math.round(v.gain.gain.value * 1000) / 1000,
+          partial: v instanceof BufferVoice && v.partial,
+        });
+    return out;
   }
 
   /** Call when the playlist order changed, so the preloaded next track is chosen again. */
@@ -655,13 +752,17 @@ export class AudioEngine extends Emitter<EngineEvents> {
     const xf = this.settings.crossfadeMs / 1000;
     const end = cur.endTime();
     const now = this.ctx.currentTime;
-    cur.gain.gain.cancelScheduledValues(Math.max(now, cur.startAt));
+    // Cancelling an automation that is under way puts the value back to where it started (0 for a
+    // fade-in), so only clear what comes after the current fade-in.
+    const keepUntil = Math.max(now, cur.startAt, cur.fadeInEnd);
+    cur.gain.gain.cancelScheduledValues(keepUntil);
     if (xf > 0) {
       const dur = Math.min(xf, cur.trimEnd - cur.trimStart, nxt.trimEnd - nxt.trimStart);
-      const when = Math.max(now + this.lead(), end - dur);
+      const when = Math.max(now + this.lead(), end - dur, keepUntil);
       nxt.start(when, nxt.trimStart);
       this.ramp(cur.gain.gain, when, Math.max(0.001, end - when), 1, 0);
       this.ramp(nxt.gain.gain, when, Math.max(0.001, end - when), 0, 1);
+      nxt.fadeInEnd = when + Math.max(0.001, end - when);
     } else if (this.settings.gapless) {
       nxt.start(Math.max(now + this.lead(), end), nxt.trimStart);
     } else {
@@ -675,7 +776,7 @@ export class AudioEngine extends Emitter<EngineEvents> {
     const f = this.settings.fades.endOfSong;
     if (!(cur instanceof BufferVoice) || cur.partial || !f.enabled || f.ms <= 0) return;
     const dur = Math.min(f.ms / 1000, cur.trimEnd - cur.trimStart);
-    this.ramp(cur.gain.gain, Math.max(this.ctx.currentTime, cur.endTime() - dur), dur, 1, 0);
+    this.ramp(cur.gain.gain, Math.max(this.ctx.currentTime, cur.fadeInEnd, cur.endTime() - dur), dur, 1, 0);
   }
 
   /** Live mode: promotes the next track when it starts and detects the end of the list. */

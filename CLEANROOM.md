@@ -11,6 +11,10 @@ of any existing player's source code.
   down in our own tables.
 - Public maths (filter design, loudness, resampling) from textbooks and papers.
 - Code from libraries whose licenses are compatible with MIT (checked by `npm run licenses`).
+- Separate LGPL programs shipped unchanged next to the app (FFmpeg), with their license text and a link to
+  their source.
+- Other players' behaviour and file formats (for example visualizer presets) used the same way: as a black
+  box and as interoperability facts, never their code, art, palettes or wording.
 
 ## Not allowed
 - Copying, translating or "porting" source code from the original player or its plugins, line by line

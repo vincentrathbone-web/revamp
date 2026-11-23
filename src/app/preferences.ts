@@ -1,7 +1,10 @@
 /** Preferences dialog: playback, fades, ReplayGain, volume, interface. Plain HTML form bound to settings. */
 import { AudioEngine } from '../audio/engine';
 import type { FadeEvent } from '../audio/fades';
-import { dialog } from '../ui/dialogs';
+import { dialog, type DialogHandle } from '../ui/dialogs';
+
+/** The open Preferences dialog, if any. */
+let prefsDialog: DialogHandle | null = null;
 import type { App } from './app';
 
 type Getter<T> = () => T;
@@ -366,7 +369,9 @@ export function openPreferences(app: App): void {
     defaults.type = 'button';
     defaults.textContent = 'Make RevAmp the default player…';
     defaults.addEventListener('click', () => {
-      // Windows only lets the user choose the default player; this opens that page with RevAmp selected
+      // Windows only lets the user choose the default player; this opens that page with RevAmp selected.
+      // Settings takes the focus; Preferences stays open for that.
+      prefsDialog?.hold(5000);
       void platform.openDefaultApps?.().catch((e: unknown) => (status.textContent = String(e)));
     });
     const hint = document.createElement('p');
@@ -428,5 +433,5 @@ export function openPreferences(app: App): void {
   });
   body.append(nav, page);
   show(0);
-  dialog({ title: 'Preferences', body, width: 560 });
+  prefsDialog = dialog({ title: 'Preferences', body, width: 560, closeOnOutside: true });
 }

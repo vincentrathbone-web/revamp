@@ -20,6 +20,7 @@ import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import type { App } from '../app/app';
 import { logger } from '../core/log';
+import { overDialog } from '../ui/dialogs';
 import { urlFileRef } from './browser';
 import type { FileRef, Platform } from './platform';
 import type { ShellSettings } from '../config/settings';
@@ -224,6 +225,7 @@ async function fitMonitors(app: App): Promise<void> {
     w: a.size.width / scale,
     h: a.size.height / scale,
   }));
+  app.host.holdLayout = false;
   app.host.keepAllOnScreen();
   app.scheduleSave();
   log.info(`covering ${areas.length} monitor(s): ${x1 - x0}x${y1 - y0} at ${x0},${y0}`);
@@ -234,7 +236,12 @@ export async function startDesktop(app: App, platform: TauriPlatform): Promise<v
   document.documentElement.classList.add('native');
   theApp = app;
   const win = getCurrentWindow();
-  await fitMonitors(app);
+  await fitMonitors(app).catch((e) => log.warn('fitting to the monitors failed', e));
+  if (app.host.holdLayout) {
+    // fitting failed: check positions against the page as it is
+    app.host.holdLayout = false;
+    app.host.keepAllOnScreen();
+  }
   await win.show();
   if (app.settings.ui.alwaysOnTop) await win.setAlwaysOnTop(true);
   // monitors plugged in, removed or rearranged
@@ -244,7 +251,7 @@ export async function startDesktop(app: App, platform: TauriPlatform): Promise<v
   let ignoring: boolean | null = null;
   const poll = async () => {
     try {
-      const busy = app.host.dragging || document.querySelector('.rv-menu-layer, .rv-dialog-layer') !== null;
+      const busy = app.host.dragging || document.querySelector('.rv-menu-layer') !== null;
       let over = busy;
       if (!busy) {
         const [cur, pos, scale] = await Promise.all([
@@ -252,7 +259,9 @@ export async function startDesktop(app: App, platform: TauriPlatform): Promise<v
           win.outerPosition(),
           win.scaleFactor(),
         ]);
-        over = app.host.hitTest((cur.x - pos.x) / scale, (cur.y - pos.y) / scale);
+        const x = (cur.x - pos.x) / scale,
+          y = (cur.y - pos.y) / scale;
+        over = app.host.hitTest(x, y) || overDialog(x, y);
       }
       if (ignoring !== !over) {
         ignoring = !over;
@@ -293,12 +302,105 @@ export async function startDesktop(app: App, platform: TauriPlatform): Promise<v
   });
 }
 
+/**
+ * Self-test part (VITE_SELFTEST_VISUAL=1): runs both visualization engines in the window and fullscreen and
+ * reports frames per second, the cost of one frame, and when each part ran (so CPU use can be matched to it).
+ */
+async function visualCheck(app: App): Promise<Record<string, unknown>> {
+  const sleep = (t: number) => new Promise((r) => setTimeout(r, t));
+  const out: Record<string, unknown> = {};
+  const vis = app.visual;
+  if (!app.host.isVisible('visual')) app.toggleWindow('visual');
+  let frames = 0;
+  const render = vis.render.bind(vis);
+  vis.render = (now?: number) => (frames++, render(now));
+  for (const engine of ['milkdrop', 'drift'] as const) {
+    await vis.setEngine(engine);
+    await sleep(1500);
+    for (const full of [false, true]) {
+      if (full) app.visualCommand('fullscreen');
+      await sleep(1000);
+      const canvas = vis.element.querySelector('canvas');
+      const from = Date.now();
+      frames = 0;
+      await sleep(5000);
+      const fps = frames / 5;
+      const to = Date.now();
+      // cost of one frame, waiting for the graphics card to finish
+      const gl = canvas?.getContext('webgl2');
+      const times: number[] = [];
+      for (let i = 0; gl && i < 60; i++) {
+        const t = performance.now();
+        render();
+        gl.finish();
+        gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));
+        times.push(performance.now() - t);
+      }
+      times.sort((a, b) => a - b);
+      out[`${engine}${full ? ' fullscreen' : ''}`] = {
+        canvas: canvas ? `${canvas.width}x${canvas.height}` : null,
+        fps: Math.round(fps * 10) / 10,
+        msMedian: Math.round((times[30] ?? 0) * 100) / 100,
+        msP95: Math.round((times[57] ?? 0) * 100) / 100,
+        title: vis.title,
+        error: vis.error || undefined,
+        from,
+        to,
+      };
+      if (full) app.visualCommand('fullscreen');
+    }
+  }
+  vis.render = render;
+  app.toggleWindow('visual');
+  return out;
+}
+
 /** Debug builds only (see self_test in main.rs): plays one file and writes what happened to a JSON report. */
 async function selfTest(app: App, platform: TauriPlatform): Promise<void> {
   const cfg = await invoke<[string, string] | null>('self_test').catch(() => null);
   if (!cfg) return;
   const [file, out] = cfg;
   const report: Record<string, unknown> = { file, platform: platform.kind };
+  if (file === '-layout' || file === '-layout-move') {
+    // window positions after start; "-layout-move" then moves the docked stack low on the biggest monitor
+    // and saves, so the next start can show whether it comes back in the same place
+    await new Promise((r) => setTimeout(r, 1500));
+    const ids = ['main', 'eq', 'pl'] as const;
+    report.monitors = app.host.screens;
+    report.atStart = Object.fromEntries(ids.map((id) => [id, app.host.position(id)]));
+    if (file === '-layout-move') {
+      const big = [...app.host.screens].sort((a, b) => b.w * b.h - a.w * a.h)[0]!;
+      const x = Math.round(big.x + big.w - 400);
+      const y = Math.round(big.y + big.h - 520);
+      app.host.setPosition('main', x, y);
+      app.host.setPosition('eq', x, y + 116);
+      app.host.setPosition('pl', x, y + 232);
+      for (const id of ids) app.settings.ui.positions[id] = app.host.position(id);
+      app.saveNow();
+      report.moved = Object.fromEntries(ids.map((id) => [id, app.host.position(id)]));
+    }
+    return invoke('write_file', {
+      path: out,
+      data: Array.from(new TextEncoder().encode(JSON.stringify(report, null, 2))),
+    });
+  }
+  if (file.startsWith('qa:')) {
+    // the QA run: a plan of cases played through the real app (see qa.ts)
+    let result: unknown;
+    try {
+      const plan = await platform.resolve(file.slice(3));
+      if (!plan) throw new Error(`no plan at ${file.slice(3)}`);
+      await new Promise((r) => setTimeout(r, 1500));
+      const { runQa } = await import('./qa');
+      result = await runQa(app, new TextDecoder().decode(await plan.read()));
+    } catch (e) {
+      result = { ok: false, crashed: String((e as Error)?.stack ?? e) };
+    }
+    return invoke('write_file', {
+      path: out,
+      data: Array.from(new TextEncoder().encode(JSON.stringify(result, null, 2))),
+    });
+  }
   if (file === '-') {
     // no file: report what command-line starts (Play / Enqueue) put in the playlist after a while
     app.setVolume(0);
@@ -343,6 +445,7 @@ async function selfTest(app: App, platform: TauriPlatform): Promise<void> {
         await new Promise((r) => setTimeout(r, 2500));
         report.seek = { to, position: app.engine.position, state: app.engine.state };
       }
+      if (!v && import.meta.env.VITE_SELFTEST_VISUAL) report.visual = await visualCheck(app);
       app.stop();
       app.setVolume(vol);
     }

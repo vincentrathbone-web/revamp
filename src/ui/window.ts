@@ -19,6 +19,9 @@ export interface WindowHostApi {
   setCursor(name: string | undefined): void;
   setTooltip(text: string | undefined): void;
   readonly focused: boolean;
+  /** Where the window is on the page (resizing from the left or top edge moves it). */
+  position?(): { x: number; y: number };
+  moveTo?(x: number, y: number): void;
 }
 
 export abstract class SkinnedWindow {

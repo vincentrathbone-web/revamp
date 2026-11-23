@@ -108,6 +108,14 @@ const EXPECT: Record<WindowId, Record<string, string>> = {
     vStretch: 'videoCommand("stretch")',
     vMenu: 'showMenu("video"',
     resize: 'skip',
+    // edge and corner resizing: screen coordinates too (checked in the desktop QA run)
+    'resize-n': 'skip',
+    'resize-s': 'skip',
+    'resize-w': 'skip',
+    'resize-e': 'skip',
+    'resize-nw': 'skip',
+    'resize-ne': 'skip',
+    'resize-sw': 'skip',
   },
   visual: {
     close: 'closeWindow("visual")',
@@ -119,6 +127,14 @@ const EXPECT: Record<WindowId, Record<string, string>> = {
     mNext: 'visualCommand("next")',
     mMenu: 'showMenu("visual"',
     resize: 'skip',
+    // edge and corner resizing: screen coordinates too (checked in the desktop QA run)
+    'resize-n': 'skip',
+    'resize-s': 'skip',
+    'resize-w': 'skip',
+    'resize-e': 'skip',
+    'resize-nw': 'skip',
+    'resize-ne': 'skip',
+    'resize-sw': 'skip',
   },
 };
 /** Hot spots the classic format gives no pressed art (shade-mode and playlist mini transport). */

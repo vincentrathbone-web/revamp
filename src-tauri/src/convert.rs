@@ -113,7 +113,7 @@ pub fn convert_args(path: &str, start: f64, copy_video: bool, has_video: bool) -
         a.push("-vn".into());
     }
     for s in [
-        "-map", "0:a:0?", "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-sn", "-dn", "-f", "mp4", "-movflags",
+        "-map", "0:a:0?", "-c:a", "aac", "-b:a", "192k", "-ac", "2", "-sn", "-dn", "-map_chapters", "-1", "-f", "mp4", "-movflags",
         "empty_moov+default_base_moof", "-frag_duration", "500000", "pipe:1",
     ] {
         a.push(s.into());

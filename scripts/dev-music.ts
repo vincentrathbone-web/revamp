@@ -40,7 +40,22 @@ export function convertArgs(path: string, start: number, copyVideo: boolean, has
       );
   } else a.push('-vn');
   a.push(
-    ...['-map', '0:a:0?', '-c:a', 'aac', '-b:a', '192k', '-ac', '2', '-sn', '-dn', '-f', 'mp4'],
+    ...[
+      '-map',
+      '0:a:0?',
+      '-c:a',
+      'aac',
+      '-b:a',
+      '192k',
+      '-ac',
+      '2',
+      '-sn',
+      '-dn',
+      '-map_chapters',
+      '-1',
+      '-f',
+      'mp4',
+    ],
     ...['-movflags', 'empty_moov+default_base_moof', '-frag_duration', '500000', 'pipe:1'],
   );
   return a;

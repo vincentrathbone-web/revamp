@@ -20,7 +20,11 @@ export class VideoWindow extends FrameWindow {
   protected buttonDefs(): FrameButton[] {
     const ui = this.ui;
     return [
-      { id: 'vFull', tip: 'Fullscreen', run: () => ui.videoCommand('fullscreen') },
+      {
+        id: 'vFull',
+        tip: 'Fullscreen (F or Ctrl+F; Esc to leave)',
+        run: () => ui.videoCommand('fullscreen'),
+      },
       { id: 'vZoom1', tip: 'Original size (100%)', run: () => ui.videoCommand('zoom1') },
       { id: 'vZoom2', tip: 'Double size (200%)', run: () => ui.videoCommand('zoom2') },
       { id: 'vStretch', tip: 'Stretch to fill / keep aspect', run: () => ui.videoCommand('stretch') },

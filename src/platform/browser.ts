@@ -162,9 +162,24 @@ export async function urlFileRef(location: string, url: string): Promise<FileRef
       size,
       read: async (o: number, l: number) => {
         if (blob) return new Uint8Array(await (await blob).slice(o, o + l).arrayBuffer());
-        const r = await fetch(url, { headers: { Range: `bytes=${o}-${o + l - 1}` } });
-        const buf = new Uint8Array(await r.arrayBuffer());
-        return r.status === 206 ? buf : buf.subarray(o, o + l);
+        l = Math.max(0, Math.min(l, (size || Infinity) - o));
+        // a server may answer a range with fewer bytes than asked (the desktop app's file server sends about
+        // 1 MB at a time): keep asking until all of it is here, or a big MP4 index gets cut short
+        const parts: Uint8Array[] = [];
+        let got = 0;
+        while (got < l) {
+          const r = await fetch(url, { headers: { Range: `bytes=${o + got}-${o + l - 1}` } });
+          const buf = new Uint8Array(await r.arrayBuffer());
+          if (r.status !== 206) return buf.subarray(o, o + l); // whole file came back
+          if (!buf.length) break;
+          parts.push(buf);
+          got += buf.length;
+        }
+        if (parts.length === 1) return parts[0]!;
+        const out = new Uint8Array(got);
+        let p = 0;
+        for (const x of parts) (out.set(x, p), (p += x.length));
+        return out;
       },
     }),
     mediaUrl: async () => url,

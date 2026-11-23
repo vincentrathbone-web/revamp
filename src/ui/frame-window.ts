@@ -22,7 +22,17 @@ export interface FrameButton {
 export abstract class FrameWindow extends SkinnedWindow {
   abstract override readonly id: 'video' | 'visual';
   private buttons = new Map<string, Button>();
-  private resizeDrag: { sx: number; sy: number; w: number; h: number } | null = null;
+  /** A resize in progress: which edges move (-1 left/top, 1 right/bottom, 0 none) and where it started. */
+  private resizeDrag: {
+    sx: number;
+    sy: number;
+    w: number;
+    h: number;
+    x: number;
+    y: number;
+    dx: -1 | 0 | 1;
+    dy: -1 | 0 | 1;
+  } | null = null;
 
   constructor(protected readonly ui: UiContext) {
     super();
@@ -87,17 +97,44 @@ export abstract class FrameWindow extends SkinnedWindow {
         ),
       );
     });
+    // resize from every edge and corner (the bottom-right grip is bigger, like the skin draws it); these
+    // come last so they win over the buttons and picture they overlap
+    const E = 4; // edge thickness
+    const K = 12; // corner size
+    const grip = (id: string, x: number, y: number, gw: number, gh: number, dx: -1 | 0 | 1, dy: -1 | 0 | 1) =>
+      new Area(
+        id,
+        x,
+        y,
+        gw,
+        gh,
+        {
+          down: (_p, e) => {
+            const pos = this.host?.position?.() ?? { x: 0, y: 0 };
+            this.resizeDrag = {
+              sx: (e as PointerEvent).screenX,
+              sy: (e as PointerEvent).screenY,
+              ...this.size(),
+              ...pos,
+              dx,
+              dy,
+            };
+          },
+          move: () => {},
+          up: () => (this.resizeDrag = null),
+        },
+        `size-${dy < 0 ? 'n' : dy > 0 ? 's' : ''}${dx < 0 ? 'w' : dx > 0 ? 'e' : ''}`,
+        'Drag to resize',
+      );
     c.push(
-      new Area('resize', w - 20, h - 20, 20, 20, {
-        down: (_p, e) =>
-          (this.resizeDrag = {
-            sx: (e as PointerEvent).screenX,
-            sy: (e as PointerEvent).screenY,
-            ...this.size(),
-          }),
-        move: () => {},
-        up: () => (this.resizeDrag = null),
-      }),
+      grip('resize-n', K, 0, w - 2 * K, E, 0, -1),
+      grip('resize-s', K, h - E, w - 2 * K, E, 0, 1),
+      grip('resize-w', 0, K, E, h - 2 * K, -1, 0),
+      grip('resize-e', w - E, K, E, h - 2 * K, 1, 0),
+      grip('resize-nw', 0, 0, K, K / 2, -1, -1),
+      grip('resize-ne', w - K, 0, K - 11, K / 2, 1, -1), // leaves the close button free
+      grip('resize-sw', 0, h - K, K, K, -1, 1),
+      grip('resize', w - 20, h - 20, 20, 20, 1, 1),
     );
     this.controls = c;
   }
@@ -113,10 +150,18 @@ export abstract class FrameWindow extends SkinnedWindow {
   resizeMove(screenX: number, screenY: number, scale: number): void {
     const r = this.resizeDrag;
     if (!r) return;
-    const w = Math.max(VIDEO_MIN_W, r.w + Math.round((screenX - r.sx) / scale / STEP_W) * STEP_W);
-    const h = Math.max(VIDEO_MIN_H, r.h + Math.round((screenY - r.sy) / scale / STEP_H) * STEP_H);
+    const w = r.dx
+      ? Math.max(VIDEO_MIN_W, r.w + r.dx * Math.round((screenX - r.sx) / scale / STEP_W) * STEP_W)
+      : r.w;
+    const h = r.dy
+      ? Math.max(VIDEO_MIN_H, r.h + r.dy * Math.round((screenY - r.sy) / scale / STEP_H) * STEP_H)
+      : r.h;
     const now = this.size();
-    if (w !== now.w || h !== now.h) this.applySize(w, h);
+    if (w === now.w && h === now.h) return;
+    this.applySize(w, h);
+    // growing to the left or up: keep the opposite edge where it was
+    if (r.dx < 0 || r.dy < 0)
+      this.host?.moveTo?.(r.dx < 0 ? r.x + (r.w - w) : r.x, r.dy < 0 ? r.y + (r.h - h) : r.y);
   }
 
   get resizing(): boolean {
