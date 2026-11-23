@@ -7,6 +7,7 @@ import { EqWindow } from '../../src/ui/eq-window';
 import { MainWindow } from '../../src/ui/main-window';
 import { PlaylistWindow } from '../../src/ui/playlist-window';
 import { VideoWindow } from '../../src/ui/video-window';
+import { VisualWindow } from '../../src/ui/visual-window';
 import { Visualizer } from '../../src/ui/vis';
 import type { SkinnedWindow, WindowId } from '../../src/ui/window';
 
@@ -40,6 +41,8 @@ export function fakeUi(skin: Skin, patch: Partial<UiState> = {}) {
     eq: { ...defaultEq(), bandsDb: [6, 4, 2, 0, -2, -4, -2, 0, 2, 4], preampDb: -3 },
     plSize: { w: 275, h: 232 },
     videoSize: { w: 275, h: 232 },
+    visualSize: { w: 275, h: 232 },
+    visualTitle: 'MilkDrop: Test preset',
     clock: 0,
     flash: null,
     ...patch,
@@ -81,6 +84,8 @@ export function fakeUi(skin: Skin, patch: Partial<UiState> = {}) {
     setPlaylistSize: rec('setPlaylistSize'),
     setVideoSize: rec('setVideoSize'),
     videoCommand: rec('videoCommand'),
+    setVisualSize: rec('setVisualSize'),
+    visualCommand: rec('visualCommand'),
     flash: () => {},
   };
   return { ui, calls, state };
@@ -92,5 +97,6 @@ export function windowsFor(ui: UiContext): Record<WindowId, SkinnedWindow> {
     eq: new EqWindow(ui),
     pl: new PlaylistWindow(ui),
     video: new VideoWindow(ui),
+    visual: new VisualWindow(ui),
   };
 }

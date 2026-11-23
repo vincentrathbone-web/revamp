@@ -3,7 +3,7 @@ import { Surface } from '../skin/surface';
 import { regionMask, type Polygon } from '../skin/textfiles';
 import { hit, type Control, type Point } from './controls';
 
-export type WindowId = 'main' | 'eq' | 'pl' | 'video';
+export type WindowId = 'main' | 'eq' | 'pl' | 'video' | 'visual';
 /** The classic windows, which have a shade mode. */
 export type ShadeId = 'main' | 'eq' | 'pl';
 

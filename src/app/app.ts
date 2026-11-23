@@ -37,7 +37,7 @@ import { filesFromDrop } from '../platform/browser';
 import { BUILTIN_SKINS, builtinLocation, builtinSkin, isBuiltinLocation } from '../skin/builtin';
 import { defaultSkin } from '../skin/default-skin';
 import { skinFromArchive, type Skin } from '../skin/skin';
-import type { MenuKind, UiContext, UiState, VideoCommand } from '../ui/context';
+import type { MenuKind, UiContext, UiState, VideoCommand, VisualCommand } from '../ui/context';
 import { dialog, factTable, prompt } from '../ui/dialogs';
 import { EqWindow } from '../ui/eq-window';
 import { BrowserHost } from '../ui/host-browser';
@@ -45,6 +45,8 @@ import { MainWindow } from '../ui/main-window';
 import { showMenu, type MenuItem } from '../ui/menu';
 import { PlaylistWindow, type TextRenderer } from '../ui/playlist-window';
 import { VideoWindow } from '../ui/video-window';
+import { VisualWindow } from '../ui/visual-window';
+import { Visual } from '../vis/visual';
 import { Visualizer } from '../ui/vis';
 import type { ShadeId, WindowId } from '../ui/window';
 import { VIDEO_MIN_H, VIDEO_MIN_W, videoArea } from '../skin/sprites';
@@ -67,6 +69,9 @@ export class App implements UiContext {
   readonly eqWin: EqWindow;
   readonly plWin: PlaylistWindow;
   readonly videoWin: VideoWindow;
+  readonly visualWin: VisualWindow;
+  /** The visualization window's picture (MilkDrop or Drift). */
+  readonly visual: Visual;
   /** The <video> element currently laid over the video window. */
   private shownVideo: HTMLVideoElement | null = null;
   private files = new Map<number, FileRef>();
@@ -114,6 +119,16 @@ export class App implements UiContext {
     this.eqWin = new EqWindow(this);
     this.plWin = new PlaylistWindow(this, textRenderer, (id) => void this.plMenuAction(id));
     this.videoWin = new VideoWindow(this);
+    this.visualWin = new VisualWindow(this);
+    this.visual = new Visual(
+      () => ({ context: this.ctx, analyser: this.engine.analyser }),
+      s.ui.visual,
+      platform,
+      () => {
+        this.visualWin.invalidate();
+        this.scheduleSave();
+      },
+    );
     this.host = new BrowserHost(root, {
       scaleOf: (id) =>
         this.settings.ui.doubleSize && (id === 'main' || (id === 'eq' && this.settings.ui.doubleSizeEq))
@@ -135,6 +150,9 @@ export class App implements UiContext {
     this.host.add(this.eqWin, pos.eq.x, pos.eq.y, s.ui.eqVisible);
     this.host.add(this.plWin, pos.pl.x, pos.pl.y, s.ui.plVisible);
     this.host.add(this.videoWin, pos.video.x, pos.video.y, s.ui.videoVisible);
+    this.host.add(this.visualWin, pos.visual.x, pos.visual.y, s.ui.visual.visible);
+    this.host.setOverlay('visual', this.visual.element, () => this.visualWin.pictureRect);
+    if (s.ui.visual.visible) void this.visual.start();
     this.host.focus('main');
     this.host.keepAllOnScreen();
     this.playlist.onChange(() => {
@@ -180,6 +198,8 @@ export class App implements UiContext {
       eq: s.audio.chain.eq,
       plSize: s.ui.plSize,
       videoSize: s.ui.videoSize,
+      visualSize: s.ui.visual.size,
+      visualTitle: this.visual?.title ?? '',
       clock: (performance.now() - this.startTime) / 1000,
       flash: performance.now() < this.flashUntil ? this.flashText : null,
     };
@@ -199,7 +219,9 @@ export class App implements UiContext {
   }
 
   private windowById(id: WindowId) {
-    return { main: this.main, eq: this.eqWin, pl: this.plWin, video: this.videoWin }[id];
+    return { main: this.main, eq: this.eqWin, pl: this.plWin, video: this.videoWin, visual: this.visualWin }[
+      id
+    ];
   }
 
   invalidateAll(): void {
@@ -207,6 +229,7 @@ export class App implements UiContext {
     this.eqWin.invalidate();
     this.plWin.invalidate();
     this.videoWin.invalidate();
+    this.visualWin?.invalidate();
   }
 
   flash(text: string): void {
@@ -455,14 +478,18 @@ export class App implements UiContext {
     this.scheduleSave();
   }
 
-  toggleWindow(id: 'eq' | 'pl' | 'video'): void {
+  toggleWindow(id: 'eq' | 'pl' | 'video' | 'visual'): void {
     this.setWindowVisible(id, !this.host.isVisible(id));
   }
 
-  private setWindowVisible(id: 'eq' | 'pl' | 'video', vis: boolean): void {
-    if (id === 'video' && !vis) this.exitFullscreen();
+  private setWindowVisible(id: 'eq' | 'pl' | 'video' | 'visual', vis: boolean): void {
+    if (!vis && this.fullscreenOf === id) this.exitFullscreen();
     this.host.setVisible(id, vis);
-    this.settings.ui[({ eq: 'eqVisible', pl: 'plVisible', video: 'videoVisible' } as const)[id]] = vis;
+    if (id === 'visual') {
+      this.settings.ui.visual.visible = vis;
+      if (vis) void this.visual.start();
+      else this.visual.stop();
+    } else this.settings.ui[({ eq: 'eqVisible', pl: 'plVisible', video: 'videoVisible' } as const)[id]] = vis;
     if (vis) this.host.keepAllOnScreen();
     this.main.invalidate();
     this.scheduleSave();
@@ -551,7 +578,7 @@ export class App implements UiContext {
     switch (cmd) {
       case 'fullscreen':
         if (this.host.fullscreen) this.exitFullscreen();
-        else void this.enterFullscreen();
+        else void this.enterFullscreen('video');
         break;
       case 'zoom1':
       case 'zoom2': {
@@ -570,13 +597,17 @@ export class App implements UiContext {
     }
   }
 
-  private async enterFullscreen(): Promise<void> {
-    if (!this.shownVideo) return this.flash('NO VIDEO PLAYING');
-    if (!this.host.isVisible('video')) this.setWindowVisible('video', true);
-    const area = this.host.enterFullscreen('video', (kind, e) =>
-      kind === 'dblclick' ? this.exitFullscreen() : this.showMenu('video', e.clientX, e.clientY),
+  /** Which window's picture fills the screen now. */
+  private fullscreenOf: 'video' | 'visual' | null = null;
+
+  private async enterFullscreen(id: 'video' | 'visual' = 'video'): Promise<void> {
+    if (id === 'video' && !this.shownVideo) return this.flash('NO VIDEO PLAYING');
+    if (!this.host.isVisible(id)) this.setWindowVisible(id, true);
+    const area = this.host.enterFullscreen(id, (kind, e) =>
+      kind === 'dblclick' ? this.exitFullscreen() : this.showMenu(id, e.clientX, e.clientY),
     );
     if (!area) return;
+    this.fullscreenOf = id;
     // desktop app: cover the whole monitor, taskbar included
     const grown = await this.platform
       .fullscreenMonitor?.(true, area.x + area.w / 2, area.y + area.h / 2)
@@ -586,6 +617,7 @@ export class App implements UiContext {
 
   private exitFullscreen(): void {
     if (!this.host.fullscreen) return;
+    this.fullscreenOf = null;
     this.host.exitFullscreen();
     void this.platform.fullscreenMonitor?.(false, 0, 0).catch(() => {});
   }
@@ -633,6 +665,150 @@ export class App implements UiContext {
         },
       },
       { label: 'Close video window', shortcut: 'Alt+V', action: () => this.setWindowVisible('video', false) },
+    ];
+  }
+
+  // ------------------------------------------------------------------ visualization window
+  setVisualSize(w: number, h: number): void {
+    const scr = this.host.screens[0] ?? this.host.screen;
+    this.settings.ui.visual.size = {
+      w: Math.max(VIDEO_MIN_W, Math.min(Math.round(w), Math.max(VIDEO_MIN_W, scr.w))),
+      h: Math.max(VIDEO_MIN_H, Math.min(Math.round(h), Math.max(VIDEO_MIN_H, scr.h))),
+    };
+    this.visualWin.relayout();
+    this.scheduleSave();
+  }
+
+  visualCommand(cmd: VisualCommand): void {
+    switch (cmd) {
+      case 'fullscreen':
+        if (this.host.fullscreen) this.exitFullscreen();
+        else void this.enterFullscreen('visual');
+        break;
+      case 'zoom1':
+        this.setVisualSize(275, 232);
+        break;
+      case 'zoom2': {
+        // picture area twice as wide and tall as at the normal size
+        const a = videoArea(275, 232);
+        this.setVisualSize(a.w * 2 + 19, a.h * 2 + 58);
+        break;
+      }
+      case 'next':
+        this.visual.next();
+        break;
+      case 'prev':
+        this.visual.prev();
+        break;
+      case 'random':
+        this.visual.next(true);
+        break;
+      case 'engine':
+        void this.visual.setEngine(this.visual.engineId === 'milkdrop' ? 'drift' : 'milkdrop');
+        break;
+    }
+    this.visualWin.invalidate();
+  }
+
+  /** Adds the user's own MilkDrop presets (.milk files) and shows the first one. */
+  async addMilkPresets(files: FileRef[]): Promise<void> {
+    const texts = await Promise.all(
+      files.map(async (f) => ({ name: f.name, text: new TextDecoder().decode(await f.read()) })),
+    );
+    const { added, failed } = await this.visual.library.addMilkFiles(texts);
+    if (added.length) {
+      if (!this.host.isVisible('visual')) this.setWindowVisible('visual', true);
+      this.visual.showPreset(added[0]!);
+    }
+    this.flash(
+      failed.length
+        ? `PRESETS: ${added.length} ADDED, ${failed.length} UNREADABLE`
+        : `PRESETS: ${added.length} ADDED`,
+    );
+  }
+
+  private async pickMilkPresets(): Promise<void> {
+    const files = await this.platform.pickFiles({ accept: ['.milk'], multiple: true });
+    if (files.length) await this.addMilkPresets(files);
+  }
+
+  private visualMenu(): MenuItem[] {
+    const v = this.settings.ui.visual;
+    const lib = this.visual.library;
+    const milk = v.engine === 'milkdrop';
+    const save = () => this.scheduleSave();
+    const all = lib.all;
+    const current = this.visual.presetName;
+    // the preset list in groups of 25, so no menu is taller than the screen
+    const groups: MenuItem[] = [];
+    for (let i = 0; i < all.length; i += 25) {
+      const part = all.slice(i, i + 25);
+      groups.push({
+        label: `${part[0]!.name.slice(0, 18)} … ${part[part.length - 1]!.name.slice(0, 18)}`,
+        checked: part.some((p) => p.name === current),
+        submenu: () =>
+          part.map((p) => ({
+            label: p.own ? `★ ${p.name}` : p.name,
+            checked: p.name === current,
+            radio: true,
+            action: () => this.visual.showPreset(p.name),
+          })),
+      });
+    }
+    const autoChoices = [0, 10, 20, 30, 60];
+    return [
+      {
+        label: 'Fullscreen',
+        shortcut: 'Alt+Enter',
+        checked: this.fullscreenOf === 'visual',
+        action: () => this.visualCommand('fullscreen'),
+      },
+      'sep',
+      { label: 'MilkDrop', checked: milk, radio: true, action: () => void this.visual.setEngine('milkdrop') },
+      { label: 'Drift', checked: !milk, radio: true, action: () => void this.visual.setEngine('drift') },
+      'sep',
+      {
+        label: milk ? 'Next preset' : 'Next scene',
+        shortcut: 'Space',
+        action: () => this.visualCommand('next'),
+      },
+      {
+        label: milk ? 'Previous preset' : 'Previous scene',
+        shortcut: 'Backspace',
+        action: () => this.visualCommand('prev'),
+      },
+      { label: 'Presets', disabled: !groups.length, submenu: () => groups },
+      {
+        label: 'Change by itself',
+        submenu: () =>
+          autoChoices.map((sec) => ({
+            label: sec ? `Every ${sec} seconds` : 'Never',
+            checked: v.autoNextSec === sec,
+            radio: true,
+            action: () => ((v.autoNextSec = sec), save()),
+          })),
+      },
+      { label: 'Random order', checked: v.random, action: () => ((v.random = !v.random), save()) },
+      'sep',
+      { label: 'Add MilkDrop presets (.milk)…', action: () => void this.pickMilkPresets() },
+      {
+        label: 'Remove my presets',
+        disabled: !lib.ownPresets.length,
+        submenu: () =>
+          lib.ownPresets.map((p) => ({
+            label: p.name,
+            action: () => {
+              lib.remove(p.name);
+              if (p.name === current) this.visual.next();
+            },
+          })),
+      },
+      'sep',
+      {
+        label: 'Close visualization window',
+        shortcut: 'Ctrl+Shift+K',
+        action: () => this.setWindowVisible('visual', false),
+      },
     ];
   }
 
@@ -711,7 +887,10 @@ export class App implements UiContext {
 
   private async onDrop(e: DragEvent, _id: WindowId | null): Promise<void> {
     if (!e.dataTransfer) return;
-    const files = await filesFromDrop(e.dataTransfer);
+    const all = await filesFromDrop(e.dataTransfer);
+    const milk = all.filter((f) => /\.milk$/i.test(f.name));
+    if (milk.length) await this.addMilkPresets(milk);
+    const files = all.filter((f) => !milk.includes(f));
     if (files.length)
       await this.addFiles(
         files.sort((a, b) => a.location.localeCompare(b.location, undefined, { numeric: true })),
@@ -1182,6 +1361,12 @@ export class App implements UiContext {
             checked: this.host.isVisible('video'),
             action: () => this.toggleWindow('video'),
           },
+          {
+            label: 'Visualization window',
+            shortcut: 'Ctrl+Shift+K',
+            checked: this.host.isVisible('visual'),
+            action: () => this.toggleWindow('visual'),
+          },
           'sep',
           { label: 'Skins', submenu: () => this.skinsMenu() },
           { label: 'Video', submenu: () => this.videoMenu() },
@@ -1251,6 +1436,8 @@ export class App implements UiContext {
         return this.visMenu();
       case 'video':
         return this.videoMenu();
+      case 'visual':
+        return this.visualMenu();
       case 'eqPresets':
         return [
           {
@@ -1416,7 +1603,13 @@ export class App implements UiContext {
       ),
     };
     let fn: (() => void) | undefined;
-    if (ctrl && k === 'l') fn = () => void this.openUrl();
+    const onVisual =
+      this.fullscreenOf === 'visual' || (!this.host.fullscreen && this.host.focused === 'visual');
+    if (ctrl && e.shiftKey && k === 'k') fn = () => this.toggleWindow('visual');
+    else if (onVisual && !ctrl && !e.altKey && k === ' ') fn = () => this.visualCommand('next');
+    else if (onVisual && !ctrl && !e.altKey && k === 'backspace') fn = () => this.visualCommand('prev');
+    else if (onVisual && e.altKey && k === 'enter') fn = () => this.visualCommand('fullscreen');
+    else if (ctrl && k === 'l') fn = () => void this.openUrl();
     else if (ctrl && k === 'd') fn = () => this.toggleDoubleSize();
     else if (ctrl && k === 't') fn = () => this.toggleTimeMode();
     else if (ctrl && k === 'p') fn = () => openPreferences(this);
@@ -1440,7 +1633,7 @@ export class App implements UiContext {
 
   // ------------------------------------------------------------------ persistence
   private saveLayout(): void {
-    for (const id of ['main', 'eq', 'pl', 'video'] as const)
+    for (const id of ['main', 'eq', 'pl', 'video', 'visual'] as const)
       this.settings.ui.positions[id] = this.host.position(id);
     this.scheduleSave();
   }
@@ -1481,6 +1674,7 @@ export class App implements UiContext {
     }
     if (this.engine.state !== 'stopped') this.plWin.invalidate();
     this.syncVideo();
+    if (this.host.isVisible('visual') || this.fullscreenOf === 'visual') this.visual.render(now);
     void this.seekPreview;
     this.host.render();
   }

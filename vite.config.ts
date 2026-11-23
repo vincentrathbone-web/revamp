@@ -9,7 +9,8 @@ export default defineConfig({
   clearScreen: false,
   plugins: [devMusic(process.env.REVAMP_MUSIC ?? 'D:/Music/Broadcast3')],
   server: { port: 5199, strictPort: true },
-  build: { target: 'es2022', outDir: 'dist' },
+  // the MilkDrop presets and .milk converter are big, but load only when first used
+  build: { target: 'es2022', outDir: 'dist', chunkSizeWarningLimit: 900 },
   test: {
     projects: [
       {

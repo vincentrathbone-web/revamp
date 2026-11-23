@@ -40,6 +40,7 @@ function setup(scale = () => 1) {
     eq: new Box('eq', 116),
     pl: new Box('pl', 232),
     video: new Box('video', 232), // added to the host only by the tests that need it
+    visual: new Box('visual', 232),
   };
   let layouts = 0;
   const host = new BrowserHost(root, {

@@ -77,7 +77,13 @@ export class BrowserHost {
     const canvas = document.createElement('canvas');
     canvas.setAttribute(
       'aria-label',
-      { main: 'RevAmp main window', eq: 'Equalizer', pl: 'Playlist editor', video: 'Video window' }[win.id],
+      {
+        main: 'RevAmp main window',
+        eq: 'Equalizer',
+        pl: 'Playlist editor',
+        video: 'Video window',
+        visual: 'Visualization window',
+      }[win.id],
     );
     el.appendChild(canvas);
     this.root.appendChild(el);

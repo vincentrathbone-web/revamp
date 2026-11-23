@@ -20,6 +20,7 @@ import { EqWindow } from '../../src/ui/eq-window';
 import { MainWindow } from '../../src/ui/main-window';
 import { PlaylistWindow } from '../../src/ui/playlist-window';
 import { VideoWindow } from '../../src/ui/video-window';
+import { VisualWindow } from '../../src/ui/visual-window';
 import type { SkinnedWindow, WindowId } from '../../src/ui/window';
 import { fakeUi } from './fake-ui';
 
@@ -108,6 +109,17 @@ const EXPECT: Record<WindowId, Record<string, string>> = {
     vMenu: 'showMenu("video"',
     resize: 'skip',
   },
+  visual: {
+    close: 'closeWindow("visual")',
+    title: 'dblclick:visualCommand("fullscreen")',
+    picture: 'dblclick:visualCommand("fullscreen")',
+    mFull: 'visualCommand("fullscreen")',
+    mZoom1: 'visualCommand("zoom1")',
+    mZoom2: 'visualCommand("zoom2")',
+    mNext: 'visualCommand("next")',
+    mMenu: 'showMenu("visual"',
+    resize: 'skip',
+  },
 };
 /** Hot spots the classic format gives no pressed art (shade-mode and playlist mini transport). */
 const NO_PRESS_ART = new Set([
@@ -176,6 +188,7 @@ function makeWindows(skin: Skin, shade: boolean) {
       (id) => menuActions.push(id),
     ),
     video: new VideoWindow(f.ui),
+    visual: new VisualWindow(f.ui),
   };
   return { ...f, wins, menuActions };
 }
@@ -375,6 +388,7 @@ export function checkSkin(skin: Skin, strict = false): string[] {
   for (const shade of [false, true])
     for (const id of ['main', 'eq', 'pl'] as const) problems.push(...checkWindow(skin, id, shade, strict));
   problems.push(...checkWindow(skin, 'video', false, strict)); // no shade mode
+  problems.push(...checkWindow(skin, 'visual', false, strict));
   return problems;
 }
 

@@ -2,11 +2,12 @@
 import { defaultAudioSettings, type AudioSettings } from '../audio/engine';
 import type { Preset } from '../dsp/eq';
 import { defaultVis, type VisSettings } from '../ui/vis';
+import { defaultVisualSettings, type VisualSettings } from '../vis/settings';
 
 export const SETTINGS_VERSION = 2;
 
 export interface UiSettings {
-  positions: Record<'main' | 'eq' | 'pl' | 'video', { x: number; y: number }>;
+  positions: Record<'main' | 'eq' | 'pl' | 'video' | 'visual', { x: number; y: number }>;
   eqVisible: boolean;
   plVisible: boolean;
   videoVisible: boolean;
@@ -15,6 +16,8 @@ export interface UiSettings {
   videoAutoShow: boolean;
   /** Fill the picture area instead of keeping the picture's shape. */
   videoStretch: boolean;
+  /** The visualization window (MilkDrop presets or the Drift engine). */
+  visual: VisualSettings;
   shade: Record<'main' | 'eq' | 'pl', boolean>;
   doubleSize: boolean;
   doubleSizeEq: boolean;
@@ -68,6 +71,7 @@ export function defaultSettings(): Settings {
         eq: { x: 40, y: 156 },
         pl: { x: 40, y: 272 },
         video: { x: 315, y: 40 },
+        visual: { x: 315, y: 272 },
       },
       eqVisible: true,
       plVisible: true,
@@ -75,6 +79,7 @@ export function defaultSettings(): Settings {
       videoSize: { w: 275, h: 232 },
       videoAutoShow: true,
       videoStretch: false,
+      visual: defaultVisualSettings(),
       shade: { main: false, eq: false, pl: false },
       doubleSize: false,
       doubleSizeEq: true,

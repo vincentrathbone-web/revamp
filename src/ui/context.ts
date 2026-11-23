@@ -8,6 +8,8 @@ import type { ShadeId, WindowId } from './window';
 
 /** What the video window's buttons and menu ask for. */
 export type VideoCommand = 'fullscreen' | 'zoom1' | 'zoom2' | 'stretch';
+/** What the visualization window's buttons, menu and keys ask for. */
+export type VisualCommand = 'fullscreen' | 'zoom1' | 'zoom2' | 'next' | 'prev' | 'random' | 'engine';
 
 export interface UiState {
   playState: PlayState;
@@ -30,6 +32,9 @@ export interface UiState {
   eq: EqState;
   plSize: { w: number; h: number };
   videoSize: { w: number; h: number };
+  visualSize: { w: number; h: number };
+  /** The visualization window's info line: engine and preset name. */
+  visualTitle: string;
   /** Seconds-since-start counter used for blinking and scrolling. */
   clock: number;
   /** Status message shown in the title area for a moment (e.g. "VOLUME: 50%"). */
@@ -48,7 +53,8 @@ export type MenuKind =
   | 'plList'
   | 'plItem'
   | 'skins'
-  | 'video';
+  | 'video'
+  | 'visual';
 
 export interface UiContext {
   readonly skin: Skin;
@@ -84,5 +90,7 @@ export interface UiContext {
   setPlaylistSize(w: number, h: number): void;
   setVideoSize(w: number, h: number): void;
   videoCommand(cmd: VideoCommand): void;
+  setVisualSize(w: number, h: number): void;
+  visualCommand(cmd: VisualCommand): void;
   flash(text: string): void;
 }

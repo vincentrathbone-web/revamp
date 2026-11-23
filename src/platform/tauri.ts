@@ -212,7 +212,7 @@ async function fitMonitors(app: App): Promise<void> {
     // keep the player windows where they are on screen
     const dx = (fitted.x - x0) / scale,
       dy = (fitted.y - y0) / scale;
-    for (const id of ['main', 'eq', 'pl', 'video'] as const) {
+    for (const id of ['main', 'eq', 'pl', 'video', 'visual'] as const) {
       const p = app.host.position(id);
       app.host.setPosition(id, p.x + dx, p.y + dy);
     }
