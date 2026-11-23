@@ -542,6 +542,8 @@ export class AudioEngine extends Emitter<EngineEvents> {
 
   /** True when the last seek was a crossfade (read by the QA run). */
   lastSeekCrossfaded = false;
+  /** How long the last seek crossfade took, in ms (read by the QA run). */
+  lastSeekFadeMs = 0;
 
   /** Jumps to `sec` seconds into the current track. */
   seek(sec: number): void {
@@ -549,10 +551,12 @@ export class AudioEngine extends Emitter<EngineEvents> {
     if (!v) return;
     const now = this.ctx.currentTime;
     this.lastSeekCrossfaded = false;
-    const xf = this.settings.crossfadeMs / 1000;
-    if (xf > 0 && this.state === 'playing' && this.seekCrossfade(v, Math.max(0, sec), xf)) return;
+    // Like the classic output: the old spot fades out while the new spot fades in, both over the
+    // "Fade on seek" time. The song crossfade length has nothing to do with it.
     const f = this.settings.fades.seek;
-    if (f.enabled && f.ms > 0 && this.state === 'playing') {
+    const fs = f.enabled ? f.ms / 1000 : 0;
+    if (fs > 0 && this.state === 'playing' && this.seekCrossfade(v, Math.max(0, sec), fs)) return;
+    if (fs > 0 && this.state === 'playing') {
       const g = this.chain.input.gain;
       g.cancelScheduledValues(now);
       g.setValueAtTime(0, now);
@@ -575,14 +579,14 @@ export class AudioEngine extends Emitter<EngineEvents> {
   }
 
   /**
-   * Plays the same song from the new spot on a second voice and crossfades to it, so a seek sounds like a
-   * crossfade between two songs. Returns false when it can't (then the plain seek runs).
+   * Plays the same song from the new spot on a second voice and crossfades to it over `xf` seconds (the
+   * seek fade time). Returns false when it can't (then the plain seek runs).
    */
   private seekCrossfade(v: Voice, sec: number, xf: number): boolean {
     if (v instanceof MediaVoice) {
       // one media element can't be in two places: dip the sound around the jump instead
       const g = this.chain.input.gain;
-      const half = Math.min(xf / 2, 0.75);
+      const half = xf / 2;
       const now = this.ctx.currentTime;
       this.ramp(g, now, half, g.value, 0);
       const el = v.el;
@@ -592,6 +596,7 @@ export class AudioEngine extends Emitter<EngineEvents> {
         this.ramp(g, this.ctx.currentTime, half, 0, 1);
       }, half * 1000);
       this.lastSeekCrossfaded = true;
+      this.lastSeekFadeMs = Math.round(xf * 1000);
       return true;
     }
     if (!(v instanceof BufferVoice)) return false;
@@ -626,6 +631,7 @@ export class AudioEngine extends Emitter<EngineEvents> {
       this.scheduleNext();
     }
     this.lastSeekCrossfaded = true;
+    this.lastSeekFadeMs = Math.round(dur * 1000);
     return true;
   }
 

@@ -101,16 +101,6 @@ export function openPreferences(app: App): void {
         ),
       ),
       row(
-        'Crossfade (ms, 0 = off)',
-        num(
-          () => a.crossfadeMs,
-          (v) => ((a.crossfadeMs = v), save()),
-          0,
-          12000,
-          100,
-        ),
-      ),
-      row(
         'Skip silence at start and end',
         check(
           () => a.silenceRemover.enabled,
@@ -139,7 +129,19 @@ export function openPreferences(app: App): void {
     ),
   ]);
 
-  const fadeRows: HTMLElement[] = [];
+  const fadeRows: HTMLElement[] = [
+    row(
+      'General crossfade',
+      num(
+        () => a.crossfadeMs,
+        (v) => ((a.crossfadeMs = v), save()),
+        0,
+        12000,
+        100,
+      ),
+      'Overlap between songs (0 = off). Seeks use "Fade on seek" instead.',
+    ),
+  ];
   for (const ev of Object.keys(FADE_LABELS) as FadeEvent[]) {
     const wrap = document.createElement('span');
     wrap.className = 'rv-pref-pair';

@@ -12,7 +12,7 @@ Windows app (Tauri 2) for daily use.
   visualizer colours). Ships with its own original skin, **Graphite**, and ten built-in studio skins (Meridian MD,
   Obsidian Core, Silverline, Nautilus, Sakura, Bubblegum, Reference Receiver, Heartwood Valve, Studio Rack, Chroma
   Deck).
-- **Sound:** gapless playback, crossfade (also when you seek), fades, silence skipping, ReplayGain, fast start
+- **Sound:** gapless playback, crossfade, fades (a seek crossfades over the short seek fade time), silence skipping, ReplayGain, fast start
   (sound in under 0.1 s).
 - **Equalizer:** 10 bands (classic or ISO), preamp, limiter; imports and exports `.eqf` / `.q1` presets.
 - **Playlists:** M3U/M3U8, PLS, XSPF (load and save), B4S (load); 100,000+ entries stay quick.

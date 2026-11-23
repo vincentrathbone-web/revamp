@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.2.1 — 2026-11-23
+
+### Changed
+
+- The song crossfade setting moved from Preferences › Playback to the top of Preferences › Fades and is now
+  called **General crossfade**.
+
+### Fixed
+
+- Seeking faded over the song crossfade length (seconds) instead of the "Fade on seek" time. A seek now
+  crossfades from the old spot to the new one over the seek fade time only, like the classic output.
+
 ## 0.2.0 — 2026-11-23
 
 ### New

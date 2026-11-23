@@ -168,6 +168,34 @@ describe('transport', () => {
     expect(peak(y, Math.round(1.5 * R), Math.round(1.6 * R)) / AMP).toBeCloseTo(1, 1);
     expect(peak(y, Math.round(2.5 * R) - 22, Math.round(2.5 * R) + 22) / AMP).toBeCloseTo(0.5, 1);
   });
+
+  test('seek fades over the "Fade on seek" time, not the song crossfade length', async () => {
+    const s = transparent();
+    s.crossfadeMs = 3000; // must not be used for seeks
+    s.fades.seek = { enabled: true, ms: 100 };
+    s.fadeShape = 'linear';
+    let seekedAt = 0;
+    const out = await render(
+      3,
+      async (e) => {
+        await e.play(await track('tone1k.wav'));
+        const ctx = (e as unknown as { ctx: OfflineAudioContext }).ctx;
+        void ctx.suspend(1).then(() => {
+          seekedAt = ctx.currentTime;
+          e.seek(2.5); // 0.5 s of the 3 s tone left
+          void ctx.resume();
+        });
+      },
+      s,
+    );
+    const y = out.getChannelData(0);
+    expect(seekedAt).toBeCloseTo(1, 2);
+    // full level again 0.2 s after the seek (a 3 s crossfade would still be near the start of its ramp)
+    const at = Math.round((seekedAt + 0.2) * R);
+    expect(peak(y, at, at + 441) / AMP).toBeGreaterThan(0.95);
+    // the new spot really plays: the tone ends about 0.5 s after the seek, long before 3 s
+    expect(rms(y, Math.round((seekedAt + 0.75) * R), Math.round(2.9 * R))).toBe(0);
+  });
 });
 
 describe('effects chain', () => {

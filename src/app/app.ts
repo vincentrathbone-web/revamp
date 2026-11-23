@@ -54,7 +54,7 @@ import { openPreferences } from './preferences';
 import { chordOf, findShortcut, type KeyActions } from './keys';
 
 const log = logger('app');
-export const VERSION = '0.2.0';
+export const VERSION = '0.2.1';
 
 const isStream = (loc: string) =>
   /^https?:\/\//i.test(loc) && !/\.(mp3|ogg|flac|m4a|wav|opus|aac)(\?|$)/i.test(loc);

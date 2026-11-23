@@ -1,7 +1,7 @@
 {
   "name": "revamp",
   "private": true,
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "RevAmp - a classic skinnable music player, rebuilt from scratch.",
   "license": "MIT",
   "type": "module",

@@ -185,18 +185,24 @@ async function crossfade(app: App, c: QaCase, r: QaResult): Promise<void> {
   await sleep(500);
 }
 
-/** Seeking inside a song with crossfade on: old and new position overlap (no hard cut, no silence). */
+/**
+ * Seeking inside a song: old and new position overlap over the "Fade on seek" time (no hard cut, no
+ * silence), and the song crossfade length (set long on purpose) is not used.
+ */
 async function seekCrossfade(app: App, c: QaCase, r: QaResult): Promise<void> {
   const xf = c.crossfadeMs ?? 3000;
-  setAudio(app, (a) => (a.crossfadeMs = xf));
+  const seekMs = 100;
+  const oldSeek = { ...app.settings.audio.fades.seek };
+  setAudio(app, (a) => ((a.crossfadeMs = xf), (a.fades.seek = { enabled: true, ms: seekMs })));
   const [ref] = await load(app, [c.file!]);
   await app.addFiles([ref!], true, true);
   await waitFor(() => app.engine.state === 'playing' && app.engine.position > 0.5, 20000);
   await sleep(4000);
   const before = app.engine.position;
   app.seek(Math.min(app.engine.duration - 20, before + 60));
-  const samples = await listen(app, xf + 2000);
+  const samples = await listen(app, 2000);
   r.data.crossfadeMs = xf;
+  r.data.seekFadeMs = app.engine.lastSeekFadeMs;
   r.data.seekFrom = Math.round(before);
   r.data.positionAfter = Math.round(app.engine.position * 10) / 10;
   r.data.voices = app.engine.debugVoices();
@@ -204,8 +210,10 @@ async function seekCrossfade(app: App, c: QaCase, r: QaResult): Promise<void> {
   r.data.samples = samples.map((s) => s.rms);
   if ((r.data.longestSilenceMs as number) > 300) r.problems.push(`silent for ${r.data.longestSilenceMs} ms`);
   if (!app.engine.lastSeekCrossfaded) r.problems.push('seek did not crossfade');
+  else if (app.engine.lastSeekFadeMs !== seekMs)
+    r.problems.push(`seek faded over ${app.engine.lastSeekFadeMs} ms, not the ${seekMs} ms seek fade`);
   app.stop();
-  setAudio(app, (a) => (a.crossfadeMs = 0));
+  setAudio(app, (a) => ((a.crossfadeMs = 0), (a.fades.seek = oldSeek)));
   await sleep(500);
 }
 
